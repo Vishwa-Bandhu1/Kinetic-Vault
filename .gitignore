@@ -1,0 +1,42 @@
+# --- Roots ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.bak
+*.tmp
+
+# --- Backend (Spring Boot) ---
+kineticvault-backend/target/
+kineticvault-backend/.mvn/
+kineticvault-backend/mvnw
+kineticvault-backend/mvnw.cmd
+kineticvault-backend/.classpath
+kineticvault-backend/.project
+kineticvault-backend/.settings/
+kineticvault-backend/bin/
+kineticvault-backend/src/main/resources/application.properties
+
+# --- Frontend (React Native) ---
+KineticVaultApp/node_modules/
+KineticVaultApp/npm-debug.log
+KineticVaultApp/yarn-error.log
+KineticVaultApp/.gradle/
+KineticVaultApp/local.properties
+KineticVaultApp/android/build/
+KineticVaultApp/android/app/build/
+KineticVaultApp/android/.gradle/
+KineticVaultApp/android/*.keystore
+!KineticVaultApp/android/debug.keystore
+KineticVaultApp/ios/Pods/
+KineticVaultApp/ios/build/
+KineticVaultApp/*.jsbundle
+KineticVaultApp/coverage/
+
+# --- Artifacts ---
+*.apk
+*.ipa
+*.exe
+*.jar
+*.war
