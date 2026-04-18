@@ -7,11 +7,11 @@
 ## 🚀 Features
 
 - **Cross-Platform Mobile App**: Built with React Native CLI, ready for both iOS and Android. Dynamic UI elements and smooth animations powered by React Native Reanimated and Lottie.
-- **AI-Powered Analysis**: Seamlessly integrates with the **Google Gemini 1.5 Flash API** for rapid evaluation of potential cybersecurity threats, logs, or suspicious texts.
+- **AI-Powered Analysis**: Seamlessly integrates with **Google Gemini 1.5/2.0/2.5 Flash APIs** for rapid evaluation of potential cybersecurity threats, logs, or suspicious texts.
 - **On-Device OCR**: Extracts text from images and documents utilizing **Tesseract OCR (Tess4J)**.
 - **Professional Report Generation**: Automatically compiles findings into downloadable, structured PDF reports using **iText 7**.
 - **Secure Data Storage**: Stores user interactions and generated reports in a cloud-based **MongoDB Atlas** cluster.
-- **Modern Backend Architecture**: High-performance REST APIs structured with Spring Boot 4 (Java 17) and reactive components via WebFlux.
+- **Modern Backend Architecture**: High-performance REST APIs structured with Spring Boot (Java 17) and reactive components via WebFlux, featuring robust model fallback logic.
 
 ---
 
@@ -24,11 +24,11 @@
 - **HTTP Client**: Axios
 
 ### Backend (Server)
-- **Framework**: Spring Boot 4.0.5 (Java 17)
+- **Framework**: Spring Boot 3.4.5 (Java 17)
 - **Database**: MongoDB (Spring Data MongoDB)
 - **OCR Engine**: Tess4J (Tesseract v5.11)
 - **PDF Generation**: iText 7 Core
-- **AI Integration**: Google Generative AI (Gemini v1.5 Flash)
+- **AI Integration**: Google Generative AI (Gemini v1.5/2.0/2.5 Flash)
 
 ---
 

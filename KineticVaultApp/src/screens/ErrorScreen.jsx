@@ -43,7 +43,7 @@ const ErrorScreen = ({route, navigation}) => {
     if (retryParams) {
       navigation.replace('Processing', retryParams);
     } else {
-      navigation.navigate('ScanTab');
+      navigation.navigate('MainTabs', { screen: 'Scan' });
     }
   };
 
@@ -78,7 +78,7 @@ const ErrorScreen = ({route, navigation}) => {
         <NeonButton
           title="🏠 Go Home"
           variant="outline"
-          onPress={() => navigation.navigate('HomeTab')}
+          onPress={() => navigation.navigate('MainTabs', { screen: 'Home' })}
           style={styles.homeBtn}
         />
       </View>

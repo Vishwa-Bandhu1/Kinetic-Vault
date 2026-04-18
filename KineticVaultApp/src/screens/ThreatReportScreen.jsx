@@ -141,7 +141,7 @@ const ThreatReportScreen = ({route, navigation}) => {
         <NeonButton
           title="🏠 Return to Dashboard"
           variant="outline"
-          onPress={() => navigation.navigate('HomeTab')}
+          onPress={() => navigation.navigate('MainTabs', { screen: 'Home' })}
           style={styles.homeBtn}
         />
 

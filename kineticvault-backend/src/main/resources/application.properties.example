@@ -10,7 +10,9 @@ spring.data.mongodb.auto-index-creation=true
 # Gemini API
 # Replace with your Gemini API key from Google AI Studio
 gemini.api.key=YOUR_API_KEY_HERE
-gemini.api.url=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+gemini.api.base-url=https://generativelanguage.googleapis.com
+gemini.api.version=v1
+gemini.api.model=gemini-2.5-flash
 
 # File Upload
 spring.servlet.multipart.max-file-size=10MB

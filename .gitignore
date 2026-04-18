@@ -17,6 +17,9 @@ kineticvault-backend/.project
 kineticvault-backend/.settings/
 kineticvault-backend/bin/
 kineticvault-backend/src/main/resources/application.properties
+kineticvault-backend/.m2-repo/
+kineticvault-backend/boot-*.err
+kineticvault-backend/boot-*.out
 
 # --- Frontend (React Native) ---
 KineticVaultApp/node_modules/

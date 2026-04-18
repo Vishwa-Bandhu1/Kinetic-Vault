@@ -1,36 +1,52 @@
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {NativeModules, Platform} from 'react-native';
 
-// Change this to your computer's local IP when testing on a physical device
-const BASE_URL = 'http://localhost:8080/api';
+const bundlerUrl = NativeModules.SourceCode?.scriptURL;
+const bundlerHostMatch = bundlerUrl?.match(/^https?:\/\/([^:/]+)(?::\d+)?/);
+const bundlerHost = bundlerHostMatch?.[1];
+
+// Use emulator redirect on Android; otherwise use the Metro bundler host if available.
+const ANDROID_LOCALHOST = '10.0.2.2';
+const IOS_LOCALHOST = 'localhost';
+const DEFAULT_HOST = Platform.OS === 'android' ? ANDROID_LOCALHOST : IOS_LOCALHOST;
+
+const HOST = bundlerHost
+  ? Platform.OS === 'android' && ['localhost', '127.0.0.1'].includes(bundlerHost)
+    ? ANDROID_LOCALHOST
+    : bundlerHost
+  : DEFAULT_HOST;
+
+const BASE_URL = `http://${HOST}:8080/api`;
 
 const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  timeout: 10000,
 });
 
-// Request interceptor for logging
+console.log('[API] Using backend host:', HOST, 'baseURL:', BASE_URL);
+
+// Request interceptor for debugging logs
 api.interceptors.request.use(
   config => {
-    console.log(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+    console.log(`[API Request] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   error => Promise.reject(error),
 );
 
-// Response interceptor for error handling
+// Response interceptor for error handling logs
 api.interceptors.response.use(
-  response => response,
+  response => {
+    console.log(`[API Response] ${response.config.url} => Status:`, response.status);
+    return response;
+  },
   error => {
     if (error.response) {
-      console.error('[API Error]', error.response.status, error.response.data);
+      console.error('[API Error - Response Data]', error.response.status, error.response.data);
     } else if (error.request) {
-      console.error('[API Error] No response received');
+      console.error('[API Error - No Response Received] Ensure Spring Boot is running and bound to 0.0.0.0', error.message);
     } else {
-      console.error('[API Error]', error.message);
+      console.error('[API Error - Setup Message]', error.message);
     }
     return Promise.reject(error);
   },
@@ -52,12 +68,15 @@ export const analyzeImage = async imageFile => {
   formData.append('image', {
     uri: imageFile.uri,
     type: imageFile.type || 'image/jpeg',
-    name: imageFile.fileName || 'screenshot.jpg',
+    name: imageFile.fileName || 'image.jpg',
   });
 
   const response = await api.post('/analyze-image', formData, {
-    headers: {'Content-Type': 'multipart/form-data'},
-    timeout: 60000,
+    headers: {
+      Accept: 'application/json',
+      // Content-Type MUST NOT be manually set to allow React Native attaching boundary natively
+    },
+    timeout: 60000, // OCR requests generally take longer, keep this increased
   });
   return response.data;
 };

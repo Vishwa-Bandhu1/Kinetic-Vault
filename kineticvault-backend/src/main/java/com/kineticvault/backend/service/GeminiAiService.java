@@ -3,6 +3,7 @@ package com.kineticvault.backend.service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -13,22 +14,38 @@ import java.util.*;
 @Service
 public class GeminiAiService {
     private static final Logger logger = LoggerFactory.getLogger(GeminiAiService.class);
-    private static final String DEFAULT_GEMINI_API_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+    private static final String DEFAULT_GEMINI_API_BASE_URL =
+            "https://generativelanguage.googleapis.com";
+    private static final String DEFAULT_GEMINI_API_VERSION = "v1";
+    private static final String DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+    private static final List<String> DEFAULT_FALLBACK_MODELS = List.of(
+            "gemini-2.0-flash",
+            "gemini-1.5-flash-latest"
+    );
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final String apiKey;
-    private final String apiUrl;
+    private final String apiBaseUrl;
+    private final String apiVersion;
+    private final String model;
 
     public GeminiAiService(WebClient.Builder webClientBuilder,
                            ObjectMapper objectMapper,
                            @Value("${gemini.api.key:}") String apiKey,
-                           @Value("${gemini.api.url:}") String apiUrl) {
+                           @Value("${gemini.api.base-url:}") String apiBaseUrl,
+                           @Value("${gemini.api.version:}") String apiVersion,
+                           @Value("${gemini.api.model:}") String model) {
         this.webClient = webClientBuilder.build();
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
-        this.apiUrl = apiUrl == null || apiUrl.isBlank() ? DEFAULT_GEMINI_API_URL : apiUrl;
+        this.apiBaseUrl = apiBaseUrl == null || apiBaseUrl.isBlank()
+                ? DEFAULT_GEMINI_API_BASE_URL
+                : apiBaseUrl;
+        this.apiVersion = apiVersion == null || apiVersion.isBlank()
+                ? DEFAULT_GEMINI_API_VERSION
+                : apiVersion;
+        this.model = model == null || model.isBlank() ? DEFAULT_GEMINI_MODEL : model;
     }
 
     /**
@@ -43,41 +60,84 @@ public class GeminiAiService {
         try {
             String prompt = buildAnalysisPrompt(message);
 
-            // Build request body for Gemini
-            Map<String, Object> requestBody = new HashMap<>();
-            List<Map<String, Object>> contents = new ArrayList<>();
-            Map<String, Object> content = new HashMap<>();
-            List<Map<String, Object>> parts = new ArrayList<>();
-            Map<String, Object> part = new HashMap<>();
-            part.put("text", prompt);
-            parts.add(part);
-            content.put("parts", parts);
-            contents.add(content);
-            requestBody.put("contents", contents);
+            Map<String, Object> requestBody = buildRequestBody(prompt);
 
-            // Generation config for JSON output
-            Map<String, Object> generationConfig = new HashMap<>();
-            generationConfig.put("temperature", 0.3);
-            generationConfig.put("topP", 0.8);
-            generationConfig.put("maxOutputTokens", 2048);
-            requestBody.put("generationConfig", generationConfig);
+            for (String candidateModel : getCandidateModels()) {
+                try {
+                    String responseBody = invokeGemini(candidateModel, requestBody);
+                    return parseGeminiResponse(responseBody);
+                } catch (WebClientResponseException.NotFound e) {
+                    logger.warn(
+                            "Gemini model '{}' was not found on API version '{}'. Trying next model if available.",
+                            candidateModel,
+                            apiVersion
+                    );
+                }
+            }
 
-            String fullUrl = apiUrl + "?key=" + apiKey;
-
-            String responseBody = webClient.post()
-                    .uri(fullUrl)
-                    .header("Content-Type", "application/json")
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            return parseGeminiResponse(responseBody);
+            logger.error(
+                    "Gemini API returned 404 for all configured model candidates. primaryModel={}, apiVersion={}",
+                    model,
+                    apiVersion
+            );
+            return getDefaultAnalysis("The configured AI model is unavailable right now. Please try again.");
 
         } catch (Exception e) {
             logger.error("Gemini API error: {}", e.getMessage(), e);
             return getDefaultAnalysis("Unable to analyze the message right now. Please try again.");
         }
+    }
+
+    private Map<String, Object> buildRequestBody(String prompt) {
+        Map<String, Object> requestBody = new HashMap<>();
+        List<Map<String, Object>> contents = new ArrayList<>();
+        Map<String, Object> content = new HashMap<>();
+        List<Map<String, Object>> parts = new ArrayList<>();
+        Map<String, Object> part = new HashMap<>();
+        part.put("text", prompt);
+        parts.add(part);
+        content.put("parts", parts);
+        contents.add(content);
+        requestBody.put("contents", contents);
+
+        Map<String, Object> generationConfig = new HashMap<>();
+        generationConfig.put("temperature", 0.3);
+        generationConfig.put("topP", 0.8);
+        generationConfig.put("maxOutputTokens", 2048);
+        requestBody.put("generationConfig", generationConfig);
+
+        return requestBody;
+    }
+
+    private List<String> getCandidateModels() {
+        LinkedHashSet<String> candidateModels = new LinkedHashSet<>();
+        candidateModels.add(model);
+        candidateModels.add(DEFAULT_GEMINI_MODEL);
+        candidateModels.addAll(DEFAULT_FALLBACK_MODELS);
+        return new ArrayList<>(candidateModels);
+    }
+
+    private String invokeGemini(String candidateModel, Map<String, Object> requestBody) {
+        String fullUrl = "%s/%s/models/%s:generateContent".formatted(
+                trimTrailingSlash(apiBaseUrl),
+                apiVersion,
+                candidateModel
+        );
+
+        logger.info("Calling Gemini model '{}' via {}", candidateModel, fullUrl);
+
+        return webClient.post()
+                .uri(fullUrl)
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", apiKey)
+                .bodyValue(requestBody)
+                .retrieve()
+                .bodyToMono(String.class)
+                .block();
+    }
+
+    private String trimTrailingSlash(String value) {
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
     }
 
     private String buildAnalysisPrompt(String message) {

@@ -132,7 +132,7 @@ const AnalysisResultScreen = ({route, navigation}) => {
         <NeonButton
           title="🔍 Scan Another"
           variant="outline"
-          onPress={() => navigation.navigate('ScanTab')}
+          onPress={() => navigation.navigate('MainTabs', { screen: 'Scan' })}
           style={styles.scanBtn}
         />
 

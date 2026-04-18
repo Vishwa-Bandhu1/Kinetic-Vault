@@ -100,13 +100,13 @@ const SafeResultScreen = ({route, navigation}) => {
         {/* Actions */}
         <NeonButton
           title="🔍 Scan Another Message"
-          onPress={() => navigation.navigate('ScanTab')}
+          onPress={() => navigation.navigate('MainTabs', { screen: 'Scan' })}
           style={styles.scanBtn}
         />
         <NeonButton
           title="🏠 Back to Dashboard"
           variant="outline"
-          onPress={() => navigation.navigate('HomeTab')}
+          onPress={() => navigation.navigate('MainTabs', { screen: 'Home' })}
           style={styles.homeBtn}
         />
 

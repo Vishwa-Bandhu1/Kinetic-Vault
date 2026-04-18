@@ -168,7 +168,7 @@ const DashboardScreen = ({navigation}) => {
         <View style={styles.actionsRow}>
           <TouchableOpacity
             style={styles.actionCard}
-            onPress={() => navigation.navigate('ScanTab')}>
+            onPress={() => navigation.navigate('Scan')}>
             <View style={styles.actionIcon}>
               <Text style={styles.actionEmoji}>🔍</Text>
             </View>
@@ -176,7 +176,7 @@ const DashboardScreen = ({navigation}) => {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionCard}
-            onPress={() => navigation.navigate('HistoryTab')}>
+            onPress={() => navigation.navigate('History')}>
             <View style={styles.actionIcon}>
               <Text style={styles.actionEmoji}>📊</Text>
             </View>
@@ -184,7 +184,7 @@ const DashboardScreen = ({navigation}) => {
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionCard}
-            onPress={() => navigation.navigate('SettingsTab')}>
+            onPress={() => navigation.navigate('Settings')}>
             <View style={styles.actionIcon}>
               <Text style={styles.actionEmoji}>⚙️</Text>
             </View>

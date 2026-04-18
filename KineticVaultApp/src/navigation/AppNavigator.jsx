@@ -43,7 +43,7 @@ const BottomTabs = () => {
         tabBarInactiveTintColor: COLORS.textMuted,
       }}>
       <Tab.Screen
-        name="HomeTab"
+        name="Home"
         component={DashboardScreen}
         options={{
           tabBarIcon: ({focused}) => (
@@ -52,7 +52,7 @@ const BottomTabs = () => {
         }}
       />
       <Tab.Screen
-        name="HistoryTab"
+        name="History"
         component={HistoryScreen}
         options={{
           tabBarIcon: ({focused}) => (
@@ -61,7 +61,7 @@ const BottomTabs = () => {
         }}
       />
       <Tab.Screen
-        name="ScanTab"
+        name="Scan"
         component={MessageInputScreen}
         options={{
           tabBarIcon: ({focused}) => (
@@ -74,7 +74,7 @@ const BottomTabs = () => {
         }}
       />
       <Tab.Screen
-        name="SettingsTab"
+        name="Settings"
         component={SettingsScreen}
         options={{
           tabBarIcon: ({focused}) => (
