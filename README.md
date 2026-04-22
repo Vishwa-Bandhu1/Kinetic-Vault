@@ -6,12 +6,14 @@
 
 ## 🚀 Features
 
-- **Cross-Platform Mobile App**: Built with React Native CLI, ready for both iOS and Android. Dynamic UI elements and smooth animations powered by React Native Reanimated and Lottie.
-- **AI-Powered Analysis**: Seamlessly integrates with **Google Gemini 1.5/2.0/2.5 Flash APIs** for rapid evaluation of potential cybersecurity threats, logs, or suspicious texts.
+- **Cross-Platform Mobile App**: Built with React Native CLI, ready for both iOS and Android. Features dynamic UI elements and smooth animations powered by React Native Reanimated and Lottie.
+- **AI-Powered Analysis**: Seamlessly integrates with **Google Gemini 1.5/2.0 Flash APIs** for rapid evaluation of potential cybersecurity threats, logs, or suspicious texts.
+- **Reliable Model Fallbacks**: Implements robust logic to switch between Gemini models automatically if a specific model or version is unavailable or rate-limited.
+- **Optimized Connectivity**: Intelligent backend host detection ensuring seamless communication from both physical devices (via ADB reverse) and emulators.
 - **On-Device OCR**: Extracts text from images and documents utilizing **Tesseract OCR (Tess4J)**.
 - **Professional Report Generation**: Automatically compiles findings into downloadable, structured PDF reports using **iText 7**.
 - **Secure Data Storage**: Stores user interactions and generated reports in a cloud-based **MongoDB Atlas** cluster.
-- **Modern Backend Architecture**: High-performance REST APIs structured with Spring Boot (Java 17) and reactive components via WebFlux, featuring robust model fallback logic.
+- **Modern Backend Architecture**: High-performance REST APIs structured with Spring Boot (Java 17) featuring proactive error handling.
 
 ---
 
@@ -21,14 +23,14 @@
 - **Framework**: React Native CLI (`react-native` v0.85)
 - **Navigation**: React Navigation v7
 - **UI & Animations**: Reanimated v4, Lottie React Native, React Native Linear Gradient, Vector Icons
-- **HTTP Client**: Axios
+- **HTTP Client**: Axios (with custom interceptors for enhanced debugging)
 
 ### Backend (Server)
 - **Framework**: Spring Boot 3.4.5 (Java 17)
 - **Database**: MongoDB (Spring Data MongoDB)
 - **OCR Engine**: Tess4J (Tesseract v5.11)
 - **PDF Generation**: iText 7 Core
-- **AI Integration**: Google Generative AI (Gemini v1.5/2.0/2.5 Flash)
+- **AI Integration**: Google Generative AI (Gemini 1.5/2.0 Flash)
 
 ---
 
@@ -87,6 +89,8 @@ cd Kinetic-Vault
 3. Run the application:
    - **For Android**:
      ```bash
+     # If using a physical device, run:
+     adb reverse tcp:8080 tcp:8080
      npm run android
      ```
    - **For iOS** *(macOS only)*:

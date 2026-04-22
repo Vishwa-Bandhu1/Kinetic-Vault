@@ -16,11 +16,11 @@ public class GeminiAiService {
     private static final Logger logger = LoggerFactory.getLogger(GeminiAiService.class);
     private static final String DEFAULT_GEMINI_API_BASE_URL =
             "https://generativelanguage.googleapis.com";
-    private static final String DEFAULT_GEMINI_API_VERSION = "v1";
+    private static final String DEFAULT_GEMINI_API_VERSION = "v1beta";
     private static final String DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
     private static final List<String> DEFAULT_FALLBACK_MODELS = List.of(
             "gemini-2.0-flash",
-            "gemini-1.5-flash-latest"
+            "gemini-1.5-flash"
     );
 
     private final WebClient webClient;
@@ -66,11 +66,13 @@ public class GeminiAiService {
                 try {
                     String responseBody = invokeGemini(candidateModel, requestBody);
                     return parseGeminiResponse(responseBody);
-                } catch (WebClientResponseException.NotFound e) {
+                } catch (WebClientResponseException e) {
                     logger.warn(
-                            "Gemini model '{}' was not found on API version '{}'. Trying next model if available.",
+                            "Gemini model '{}' failed on API version '{}': HTTP {} - {}. Trying next model if available.",
                             candidateModel,
-                            apiVersion
+                            apiVersion,
+                            e.getStatusCode().value(),
+                            e.getStatusText()
                     );
                 }
             }

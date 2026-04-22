@@ -1,20 +1,20 @@
 import axios from 'axios';
 import {NativeModules, Platform} from 'react-native';
 
+// For physical devices: use `adb reverse tcp:8080 tcp:8080` so localhost works.
+// For emulators: use 10.0.2.2 (Android emulator's alias for the host machine).
+// Detect environment: Metro bundler on physical USB devices uses the PC's LAN IP,
+// while emulators use 10.0.2.2 for the bundler.
 const bundlerUrl = NativeModules.SourceCode?.scriptURL;
 const bundlerHostMatch = bundlerUrl?.match(/^https?:\/\/([^:/]+)(?::\d+)?/);
 const bundlerHost = bundlerHostMatch?.[1];
 
-// Use emulator redirect on Android; otherwise use the Metro bundler host if available.
-const ANDROID_LOCALHOST = '10.0.2.2';
-const IOS_LOCALHOST = 'localhost';
-const DEFAULT_HOST = Platform.OS === 'android' ? ANDROID_LOCALHOST : IOS_LOCALHOST;
+const isEmulator =
+  bundlerHost && ['10.0.2.2', '10.0.3.2'].includes(bundlerHost);
 
-const HOST = bundlerHost
-  ? Platform.OS === 'android' && ['localhost', '127.0.0.1'].includes(bundlerHost)
-    ? ANDROID_LOCALHOST
-    : bundlerHost
-  : DEFAULT_HOST;
+// On a physical device with ADB reverse, localhost on the device maps to the PC.
+// On an emulator, 10.0.2.2 maps to the host machine's localhost.
+const HOST = isEmulator ? '10.0.2.2' : 'localhost';
 
 const BASE_URL = `http://${HOST}:8080/api`;
 
