@@ -135,9 +135,9 @@ const SplashScreen = ({navigation}) => {
       {/* Title */}
       <Animated.View style={{opacity: fadeAnim}}>
         <Text style={styles.title}>
-          <Text style={styles.titleGreen}>KINETIC</Text>
+          <Text style={styles.titleGreen}>CYBERBAIT</Text>
           {'\n'}
-          <Text style={styles.titleWhite}>VAULT</Text>
+          <Text style={styles.titleWhite}>AN AI-BASED SCAM CONVERSATION</Text>
         </Text>
       </Animated.View>
 
@@ -271,10 +271,10 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
   },
   titleWhite: {
-    fontSize: 42,
-    fontWeight: '300',
+    fontSize: 16,
+    fontWeight: '500',
     color: COLORS.textPrimary,
-    letterSpacing: 6,
+    letterSpacing: 1.5,
   },
   divider: {
     width: 40,

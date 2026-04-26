@@ -1,4 +1,4 @@
-// Kinetic Vault Dark Cyber Theme
+// CyberBait: CyberBait An AI-Based Scam Conversation Dark Cyber Theme
 export const COLORS = {
   // Primary
   primary: '#00FF41',

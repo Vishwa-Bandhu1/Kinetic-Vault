@@ -1,9 +1,19 @@
-import React, {useState} from 'react';
-import {View, Text, StyleSheet, ScrollView, Switch, TouchableOpacity, Alert} from 'react-native';
+import React, {useState, useEffect, useCallback} from 'react';
+import {View, Text, StyleSheet, ScrollView, Switch, TouchableOpacity, Alert, Platform, AppState} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ScreenWrapper from '../components/ScreenWrapper';
 import GlassCard from '../components/GlassCard';
 import {COLORS} from '../theme';
+import {
+  checkSmsNotificationAccess,
+  checkSmsPermission,
+  promptForSmsBackgroundReliability,
+  requestSmsNotificationAccess,
+  requestSmsPermission,
+  setSmsAutoScanEnabled,
+} from '../utils/SmsPermissions';
+
+const SMS_AUTO_SCAN_KEY = '@sms_auto_scan_enabled';
 
 const SettingsScreen = ({navigation}) => {
   const [settings, setSettings] = useState({
@@ -14,6 +24,72 @@ const SettingsScreen = ({navigation}) => {
     dataSaver: false,
     analytics: false,
   });
+
+  // SMS Auto-Scan state
+  const [smsAutoScan, setSmsAutoScan] = useState(false);
+  const [smsPermissionGranted, setSmsPermissionGranted] = useState(false);
+  const [notificationAccessGranted, setNotificationAccessGranted] =
+    useState(false);
+
+  const refreshSmsState = useCallback(async () => {
+    try {
+      const value = await AsyncStorage.getItem(SMS_AUTO_SCAN_KEY);
+      const autoScanEnabled = value === 'true';
+      setSmsAutoScan(autoScanEnabled);
+      await setSmsAutoScanEnabled(autoScanEnabled);
+
+      if (Platform.OS === 'android') {
+        const granted = await checkSmsPermission();
+        setSmsPermissionGranted(granted);
+        const notificationGranted = await checkSmsNotificationAccess();
+        setNotificationAccessGranted(notificationGranted);
+      }
+    } catch (error) {
+      console.log('[Settings] Error loading SMS state:', error);
+    }
+  }, []);
+
+  // Load SMS preference and permission status on mount
+  useEffect(() => {
+    refreshSmsState();
+  }, [refreshSmsState]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        refreshSmsState();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [refreshSmsState]);
+
+  const handleSmsToggle = useCallback(async () => {
+    if (!smsAutoScan) {
+      // Turning ON — check permission first
+      if (!smsPermissionGranted) {
+        const granted = await requestSmsPermission();
+        setSmsPermissionGranted(granted);
+        if (!granted) {
+          Alert.alert(
+            'Permission Needed',
+            'SMS permission is required to enable auto-scan. Please grant the permission and try again.',
+          );
+          return;
+        }
+      }
+      // Permission granted, enable
+      setSmsAutoScan(true);
+      await AsyncStorage.setItem(SMS_AUTO_SCAN_KEY, 'true');
+      await setSmsAutoScanEnabled(true);
+      promptForSmsBackgroundReliability();
+    } else {
+      // Turning OFF
+      setSmsAutoScan(false);
+      await AsyncStorage.setItem(SMS_AUTO_SCAN_KEY, 'false');
+      await setSmsAutoScanEnabled(false);
+    }
+  }, [smsAutoScan, smsPermissionGranted]);
 
   const toggleSetting = key => {
     setSettings(prev => ({...prev, [key]: !prev[key]}));
@@ -54,6 +130,96 @@ const SettingsScreen = ({navigation}) => {
           <Text style={styles.title}>Settings</Text>
           <Text style={styles.version}>v1.0.0</Text>
         </View>
+
+        {/* SMS Auto-Scan Section */}
+        {Platform.OS === 'android' && (
+          <>
+            <Text style={styles.sectionTitle}>📨 SMS Auto-Scan</Text>
+            <GlassCard style={styles.settingsCard}>
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleContent}>
+                  <Text style={styles.toggleLabel}>SMS Auto-Scan</Text>
+                  <Text style={styles.toggleDesc}>
+                    Automatically analyze incoming SMS for threats
+                  </Text>
+                </View>
+                <Switch
+                  value={smsAutoScan}
+                  onValueChange={handleSmsToggle}
+                  trackColor={{
+                    false: 'rgba(255,255,255,0.1)',
+                    true: 'rgba(0, 255, 65, 0.3)',
+                  }}
+                  thumbColor={smsAutoScan ? COLORS.primary : COLORS.textMuted}
+                />
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.permissionRow}>
+                <View style={styles.permissionInfo}>
+                  <View
+                    style={[
+                      styles.permissionDot,
+                      {
+                        backgroundColor: smsPermissionGranted
+                          ? COLORS.primary
+                          : COLORS.danger,
+                      },
+                    ]}
+                  />
+                  <Text style={styles.permissionText}>
+                    SMS Permission:{' '}
+                    {smsPermissionGranted ? 'Granted' : 'Not Granted'}
+                  </Text>
+                </View>
+                {!smsPermissionGranted && (
+                  <TouchableOpacity
+                    style={styles.grantBtn}
+                    onPress={async () => {
+                      const granted = await requestSmsPermission();
+                      setSmsPermissionGranted(granted);
+                    }}>
+                    <Text style={styles.grantBtnText}>Grant</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.permissionRow}>
+                <View style={styles.permissionInfo}>
+                  <View
+                    style={[
+                      styles.permissionDot,
+                      {
+                        backgroundColor: notificationAccessGranted
+                          ? COLORS.primary
+                          : COLORS.riskMedium,
+                      },
+                    ]}
+                  />
+                  <View>
+                    <Text style={styles.permissionText}>
+                      Realme Fallback:{' '}
+                      {notificationAccessGranted ? 'Enabled' : 'Not Enabled'}
+                    </Text>
+                    <Text style={styles.permissionHint}>
+                      Uses SMS notifications if broadcasts are blocked
+                    </Text>
+                  </View>
+                </View>
+                {!notificationAccessGranted && (
+                  <TouchableOpacity
+                    style={styles.grantBtn}
+                    onPress={async () => {
+                      await requestSmsNotificationAccess();
+                      const granted = await checkSmsNotificationAccess();
+                      setNotificationAccessGranted(granted);
+                    }}>
+                    <Text style={styles.grantBtnText}>Enable</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </GlassCard>
+          </>
+        )}
 
         {/* Security Section */}
         <Text style={styles.sectionTitle}>🔒 Security</Text>
@@ -148,7 +314,7 @@ const SettingsScreen = ({navigation}) => {
 
         {/* Footer */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Kinetic Vault — AI-Powered Security</Text>
+          <Text style={styles.footerText}>CyberBait: CyberBait An AI-Based Scam Conversation — AI-Powered Security</Text>
           <Text style={styles.footerSubtext}>Your data never leaves your control.</Text>
         </View>
 
@@ -225,6 +391,47 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: COLORS.border,
     marginVertical: 10,
+  },
+  permissionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  permissionInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+  },
+  permissionDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  permissionText: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  permissionHint: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  grantBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    backgroundColor: 'rgba(0, 255, 65, 0.08)',
+  },
+  grantBtnText: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   actionRow: {
     flexDirection: 'row',

@@ -1,10 +1,16 @@
 import axios from 'axios';
 import {NativeModules, Platform} from 'react-native';
 
-// For physical devices: use `adb reverse tcp:8080 tcp:8080` so localhost works.
-// For emulators: use 10.0.2.2 (Android emulator's alias for the host machine).
-// Detect environment: Metro bundler on physical USB devices uses the PC's LAN IP,
-// while emulators use 10.0.2.2 for the bundler.
+// ── Deployed backend URL (Render) ──────────────────────────────────
+// Set USE_DEPLOYED = true when testing against the live Render backend.
+// Set USE_DEPLOYED = false for local development with Spring Boot.
+const USE_DEPLOYED = false;
+const DEPLOYED_URL = 'https://kineticvault-backend.onrender.com/api';
+
+// ── Local backend host detection ───────────────────────────────────
+// Metro bundler's script URL reveals how the device reaches the PC:
+//   • Emulators  → 10.0.2.2 (Android AVD alias for host loopback)
+//   • Physical   → PC's LAN IPv4 (e.g. 192.168.x.x)
 const bundlerUrl = NativeModules.SourceCode?.scriptURL;
 const bundlerHostMatch = bundlerUrl?.match(/^https?:\/\/([^:/]+)(?::\d+)?/);
 const bundlerHost = bundlerHostMatch?.[1];
@@ -12,18 +18,20 @@ const bundlerHost = bundlerHostMatch?.[1];
 const isEmulator =
   bundlerHost && ['10.0.2.2', '10.0.3.2'].includes(bundlerHost);
 
-// On a physical device with ADB reverse, localhost on the device maps to the PC.
-// On an emulator, 10.0.2.2 maps to the host machine's localhost.
-const HOST = isEmulator ? '10.0.2.2' : 'localhost';
+// Use the bundler host as the backend host — it is the IP the device
+// already uses to reach the PC, so Spring Boot (bound to 0.0.0.0)
+// will be reachable on the same address.
+const LOCAL_HOST = isEmulator ? '10.0.2.2' : (bundlerHost || '192.168.1.6');
+const LOCAL_URL = `http://${LOCAL_HOST}:8080/api`;
 
-const BASE_URL = `http://${HOST}:8080/api`;
+const BASE_URL = USE_DEPLOYED ? DEPLOYED_URL : LOCAL_URL;
 
 const api = axios.create({
   baseURL: BASE_URL,
-  timeout: 10000,
+  timeout: 15000,
 });
 
-console.log('[API] Using backend host:', HOST, 'baseURL:', BASE_URL);
+console.log('[API] Using backend host:', USE_DEPLOYED ? 'Render (deployed)' : LOCAL_HOST, 'baseURL:', BASE_URL);
 
 // Request interceptor for debugging logs
 api.interceptors.request.use(

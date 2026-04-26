@@ -79,7 +79,7 @@ const DashboardScreen = ({navigation}) => {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.logo}>KINETIC VAULT</Text>
+            <Text style={styles.logo}>CYBERBAIT</Text>
           </View>
           <View style={styles.headerRight}>
             <TouchableOpacity style={styles.notifBtn}>

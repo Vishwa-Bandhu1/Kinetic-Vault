@@ -1,9 +1,11 @@
-import React from 'react';
-import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
+import React, {useRef, useCallback, useState, useEffect} from 'react';
+import {View, Text, StyleSheet} from 'react-native';
 import {NavigationContainer} from '@react-navigation/native';
 import {createStackNavigator} from '@react-navigation/stack';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {COLORS} from '../theme';
+import useSmsListener from '../hooks/useSmsListener';
 
 // Screens
 import SplashScreen from '../screens/SplashScreen';
@@ -20,6 +22,8 @@ import SettingsScreen from '../screens/SettingsScreen';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
+
+const SMS_AUTO_SCAN_KEY = '@sms_auto_scan_enabled';
 
 // Custom Tab Bar Icon
 const TabIcon = ({label, emoji, focused}) => (
@@ -88,8 +92,97 @@ const BottomTabs = () => {
 
 // Main Navigation
 const AppNavigator = () => {
+  const navigationRef = useRef(null);
+  const pendingSmsEventsRef = useRef([]);
+  const [smsAutoScan, setSmsAutoScan] = useState(false);
+
+  // Load the user's SMS auto-scan preference
+  useEffect(() => {
+    const loadPreference = async () => {
+      try {
+        const value = await AsyncStorage.getItem(SMS_AUTO_SCAN_KEY);
+        setSmsAutoScan(value === 'true');
+      } catch (error) {
+        console.log('[AppNavigator] Error loading SMS preference:', error);
+      }
+    };
+    loadPreference();
+
+    // Poll for preference changes (set from SettingsScreen)
+    const interval = setInterval(async () => {
+      try {
+        const value = await AsyncStorage.getItem(SMS_AUTO_SCAN_KEY);
+        setSmsAutoScan(value === 'true');
+      } catch (_) {}
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const processSmsEvent = useCallback(
+    smsEvent => {
+      const nav = navigationRef.current;
+      if (!nav || !nav.isReady()) return false;
+
+      const currentRoute = nav.getCurrentRoute();
+      // Don't interrupt if already on Processing screen
+      if (currentRoute?.name === 'Processing') return false;
+
+      console.log(
+        '[AppNavigator] Auto-analyzing SMS from:',
+        smsEvent.sender,
+      );
+
+      // Navigate to Processing screen with the SMS content
+      nav.navigate('Processing', {
+        message: smsEvent.message,
+        type: 'text',
+        autoSms: true,
+        sender: smsEvent.sender,
+      });
+      return true;
+    },
+    [],
+  );
+
+  const flushPendingSmsEvents = useCallback(() => {
+    const nextSmsEvent = pendingSmsEventsRef.current[0];
+    if (!nextSmsEvent) return;
+
+    if (processSmsEvent(nextSmsEvent)) {
+      pendingSmsEventsRef.current.shift();
+    }
+  }, [processSmsEvent]);
+
+  // Handle incoming SMS: auto-navigate to Processing screen
+  const handleSmsReceived = useCallback(
+    smsEvent => {
+      if (processSmsEvent(smsEvent)) return;
+
+      pendingSmsEventsRef.current.push(smsEvent);
+      if (pendingSmsEventsRef.current.length > 10) {
+        pendingSmsEventsRef.current.shift();
+      }
+
+      console.log('[AppNavigator] SMS queued until navigation is ready');
+    },
+    [processSmsEvent],
+  );
+
+  useEffect(() => {
+    if (smsAutoScan) {
+      flushPendingSmsEvents();
+    }
+  }, [smsAutoScan, flushPendingSmsEvents]);
+
+  // Activate the SMS listener only when auto-scan is enabled
+  useSmsListener(handleSmsReceived, smsAutoScan);
+
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      ref={navigationRef}
+      onReady={flushPendingSmsEvents}
+      onStateChange={flushPendingSmsEvents}>
       <Stack.Navigator
         screenOptions={{
           headerShown: false,

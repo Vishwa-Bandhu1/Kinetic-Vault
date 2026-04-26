@@ -60,7 +60,7 @@ const MessageInputScreen = ({navigation}) => {
             <View style={styles.logoContainer}>
               <Text style={styles.logoEmoji}>🛡️</Text>
             </View>
-            <Text style={styles.logo}>KINETIC VAULT</Text>
+            <Text style={styles.logo}>CYBERBAIT</Text>
           </View>
           <TouchableOpacity>
             <Text style={styles.bellIcon}>🔔</Text>
