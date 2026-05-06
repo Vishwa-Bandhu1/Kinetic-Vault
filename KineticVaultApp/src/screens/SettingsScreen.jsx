@@ -308,7 +308,7 @@ const SettingsScreen = ({navigation}) => {
           <View style={styles.divider} />
           <View style={styles.aboutRow}>
             <Text style={styles.aboutLabel}>Engine</Text>
-            <Text style={styles.aboutValue}>Gemini AI</Text>
+            <Text style={styles.aboutValue}>gpt-oss:20b</Text>
           </View>
         </GlassCard>
 

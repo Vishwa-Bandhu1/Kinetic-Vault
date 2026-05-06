@@ -61,7 +61,12 @@ const AnalysisResultScreen = ({route, navigation}) => {
             </View>
             <View style={styles.confidenceDivider} />
             <View style={styles.confidenceItem}>
-              <Text style={[styles.confidenceValue, {color: threatColor}]}>
+              <Text 
+                style={[styles.confidenceValue, {color: threatColor}]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.5}
+              >
                 {result.threatLevel}
               </Text>
               <Text style={styles.confidenceLabel}>Threat Level</Text>

@@ -1,13 +1,16 @@
 package com.kineticvault.backend.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;
 import java.util.Map;
 
 public class AnalyzeResponse {
 
     private String id;
+    private boolean isThreat;
     private int riskScore;
     private String threatLevel;
+    private List<String> threats;
     private List<Map<String, Object>> keywords;
     private Map<String, Object> entities;
     private String explanation;
@@ -19,11 +22,19 @@ public class AnalyzeResponse {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
+    @JsonProperty("isThreat")
+    public boolean isThreat() { return isThreat; }
+    @JsonProperty("isThreat")
+    public void setThreat(boolean threat) { isThreat = threat; }
+
     public int getRiskScore() { return riskScore; }
     public void setRiskScore(int riskScore) { this.riskScore = riskScore; }
 
     public String getThreatLevel() { return threatLevel; }
     public void setThreatLevel(String threatLevel) { this.threatLevel = threatLevel; }
+
+    public List<String> getThreats() { return threats; }
+    public void setThreats(List<String> threats) { this.threats = threats; }
 
     public List<Map<String, Object>> getKeywords() { return keywords; }
     public void setKeywords(List<Map<String, Object>> keywords) { this.keywords = keywords; }

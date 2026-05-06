@@ -7,7 +7,7 @@
 ## 🚀 Features
 
 - **Real-Time SMS Protection**: Automatically intercepts and analyzes incoming SMS messages for phishing links and scam intent using a native Android BroadcastReceiver.
-- **AI-Powered Analysis**: Seamlessly integrates with **Google Gemini 1.5/2.0 Flash APIs** for rapid evaluation of potential cybersecurity threats.
+- **AI-Powered Analysis**: Seamlessly integrates with **MIET AI Gateway (College AI API)** for rapid evaluation of potential cybersecurity threats.
 - **OEM-Specific Optimization**: Specialized fallback mechanisms for **Realme, Oppo, and Vivo** devices to ensure reliable background detection despite aggressive battery management.
 - **Cross-Platform Mobile App**: Built with React Native CLI, featuring a premium dark-mode UI with smooth animations (Reanimated v4, Lottie).
 - **On-Device OCR**: Extracts text from screenshots and suspicious documents utilizing **Tesseract OCR**.
@@ -30,7 +30,7 @@
 - **Database**: MongoDB (Spring Data MongoDB)
 - **OCR Engine**: Tess4J (Tesseract v5.11)
 - **PDF Generation**: iText 7 Core
-- **AI Integration**: Google Generative AI (Gemini 1.5/2.0 Flash)
+- **AI Integration**: MIET AI Gateway (gpt-oss:20b)
 
 ---
 
@@ -43,7 +43,7 @@ To run this project locally, ensure you have the following installed:
 - **Java Development Kit (JDK)**: Version 17
 - **Apache Maven**: For building the Spring Boot application.
 - **Tesseract OCR Language Data**: Specifically the `tessdata` folder containing `eng.traineddata`.
-- **Google AI Studio Account**: To obtain a Gemini API Key.
+- **College AI Gateway Account**: To obtain an AI Gateway Token.
 - **MongoDB Atlas Cluster**: Or a local MongoDB instance.
 
 ---
@@ -68,7 +68,7 @@ cd Kinetic-Vault
    ```
    Open `application.properties` and add your:
    - MongoDB connection string.
-   - Google Gemini API Key.
+   - MIET AI Gateway Token.
 3. Build and run the server:
    ```bash
    ./mvnw clean install
