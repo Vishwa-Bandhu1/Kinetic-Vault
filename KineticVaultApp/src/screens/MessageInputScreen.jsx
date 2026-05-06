@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useState, useCallback} from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,11 @@ import {
   TouchableOpacity,
   Alert,
   Keyboard,
+  Platform,
+  PermissionsAndroid,
+  ActivityIndicator,
 } from 'react-native';
+import SmsAndroid from 'react-native-get-sms-android';
 import {launchImageLibrary} from 'react-native-image-picker';
 import ScreenWrapper from '../components/ScreenWrapper';
 import GlassCard from '../components/GlassCard';
@@ -16,17 +20,192 @@ import NeonButton from '../components/NeonButton';
 import RiskMeter from '../components/RiskMeter';
 import {COLORS, SIZES} from '../theme';
 
+/**
+ * Request READ_SMS + RECEIVE_SMS permissions at runtime.
+ * Returns true only when both are granted.
+ */
+const ensureSmsPermission = async () => {
+  if (Platform.OS !== 'android') return false;
+
+  try {
+    const readStatus = await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.READ_SMS,
+    );
+    const receiveStatus = await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+    );
+
+    if (readStatus && receiveStatus) {
+      console.log('[SMS] Permissions already granted');
+      return true;
+    }
+
+    console.log('[SMS] Requesting permissions...');
+    const granted = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.READ_SMS,
+      PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
+    ]);
+
+    const readGranted =
+      granted[PermissionsAndroid.PERMISSIONS.READ_SMS] ===
+      PermissionsAndroid.RESULTS.GRANTED;
+    const receiveGranted =
+      granted[PermissionsAndroid.PERMISSIONS.RECEIVE_SMS] ===
+      PermissionsAndroid.RESULTS.GRANTED;
+
+    console.log('[SMS] Permission result — READ:', readGranted, 'RECEIVE:', receiveGranted);
+
+    if (!readGranted) {
+      const neverAskRead =
+        granted[PermissionsAndroid.PERMISSIONS.READ_SMS] ===
+        PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN;
+      const neverAskReceive =
+        granted[PermissionsAndroid.PERMISSIONS.RECEIVE_SMS] ===
+        PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN;
+
+      if (neverAskRead || neverAskReceive) {
+        Alert.alert(
+          'SMS Permission Required',
+          'SMS permission was permanently denied. Please enable it from Settings > Apps > CyberBait > Permissions.',
+          [
+            {text: 'Cancel', style: 'cancel'},
+            {
+              text: 'Open Settings',
+              onPress: () => {
+                const {Linking} = require('react-native');
+                Linking.openSettings();
+              },
+            },
+          ],
+        );
+      }
+      return false;
+    }
+
+    return readGranted;
+  } catch (error) {
+    console.error('[SMS] Permission error:', error);
+    return false;
+  }
+};
+
+/**
+ * Fetch the single most-recent SMS from the device inbox.
+ * Returns a Promise that resolves to the SMS body string, or null on failure.
+ */
+const fetchLatestSms = () => {
+  return new Promise(resolve => {
+    const filter = {
+      box: 'inbox',
+      maxCount: 1, // Only the very latest message
+    };
+
+    console.log('[SMS] Fetching latest inbox message...');
+
+    SmsAndroid.list(
+      JSON.stringify(filter),
+      fail => {
+        console.error('[SMS] Inbox read failed:', fail);
+        resolve(null);
+      },
+      (_count, smsListStr) => {
+        try {
+          const smsList = JSON.parse(smsListStr);
+          console.log('[SMS] Inbox returned', smsList?.length, 'message(s)');
+
+          if (!smsList || smsList.length === 0) {
+            console.warn('[SMS] Inbox is empty');
+            resolve(null);
+            return;
+          }
+
+          const latest = smsList[0];
+          console.log(
+            '[SMS] Latest SMS — from:',
+            latest.address,
+            '| length:',
+            latest.body?.length,
+            '| date:',
+            new Date(latest.date).toLocaleString(),
+          );
+
+          if (!latest.body || !latest.body.trim()) {
+            console.warn('[SMS] Latest SMS has no body text');
+            resolve(null);
+            return;
+          }
+
+          resolve(latest.body.trim());
+        } catch (parseError) {
+          console.error('[SMS] Parse error:', parseError);
+          resolve(null);
+        }
+      },
+    );
+  });
+};
+
 const MessageInputScreen = ({navigation}) => {
   const [message, setMessage] = useState('');
+  const [isFetching, setIsFetching] = useState(false);
 
-  const handleAnalyze = () => {
-    if (!message.trim()) {
-      Alert.alert('Empty Message', 'Please enter a message to analyze.');
+  const handleAnalyze = useCallback(async () => {
+    // If user already typed a message, use it directly
+    if (message.trim()) {
+      console.log('[Analyze] Using user-typed message (' + message.trim().length + ' chars)');
+      Keyboard.dismiss();
+      navigation.navigate('Processing', {message: message.trim(), type: 'text'});
       return;
     }
-    Keyboard.dismiss();
-    navigation.navigate('Processing', {message: message.trim(), type: 'text'});
-  };
+
+    // Input is empty — auto-fetch the latest SMS
+    console.log('[Analyze] Input empty, auto-fetching latest SMS...');
+    setIsFetching(true);
+
+    try {
+      // Step 1: Ensure permissions
+      const hasPermission = await ensureSmsPermission();
+      if (!hasPermission) {
+        console.warn('[Analyze] SMS permission denied');
+        Alert.alert(
+          'Permission Required',
+          'SMS read permission is needed to fetch your latest message. Please grant the permission and try again.',
+        );
+        setIsFetching(false);
+        return;
+      }
+
+      // Step 2: Fetch the latest SMS
+      const smsBody = await fetchLatestSms();
+
+      if (!smsBody) {
+        console.warn('[Analyze] No SMS found in inbox');
+        Alert.alert(
+          'No SMS Found',
+          'Your SMS inbox appears to be empty. Please paste a message manually or try again after receiving an SMS.',
+        );
+        setIsFetching(false);
+        return;
+      }
+
+      // Step 3: Fill the input field with the fetched SMS
+      console.log('[Analyze] SMS fetched successfully, auto-filling input...');
+      setMessage(smsBody);
+
+      // Step 4: Immediately trigger analysis (don't wait for re-render)
+      console.log('[Analyze] Navigating to Processing screen...');
+      Keyboard.dismiss();
+      navigation.navigate('Processing', {message: smsBody, type: 'text'});
+    } catch (error) {
+      console.error('[Analyze] Unexpected error:', error);
+      Alert.alert(
+        'Error',
+        'Failed to fetch SMS from inbox. Please paste the message manually.',
+      );
+    } finally {
+      setIsFetching(false);
+    }
+  }, [message, navigation]);
 
   const handleUploadScreenshot = async () => {
     try {
@@ -99,10 +278,18 @@ const MessageInputScreen = ({navigation}) => {
 
         {/* Action Buttons */}
         <NeonButton
-          title="⚡ Analyze Message"
+          title={isFetching ? '📡 Fetching SMS...' : '⚡ Analyze Message'}
           onPress={handleAnalyze}
           style={styles.analyzeBtn}
+          disabled={isFetching}
         />
+
+        {isFetching && (
+          <View style={styles.fetchingIndicator}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+            <Text style={styles.fetchingText}>Reading latest SMS from inbox...</Text>
+          </View>
+        )}
 
         <NeonButton
           title="📸 Upload Screenshot"
@@ -120,7 +307,7 @@ const MessageInputScreen = ({navigation}) => {
           <View style={styles.tipItem}>
             <View style={[styles.tipDot, {backgroundColor: COLORS.primary}]} />
             <Text style={styles.tipText}>
-              Include URLs and sender metadata for 40% higher accuracy.
+              Tap "Analyze Message" with an empty field to auto-fetch your latest SMS.
             </Text>
           </View>
           <View style={styles.tipItem}>
@@ -257,6 +444,18 @@ const styles = StyleSheet.create({
   },
   analyzeBtn: {
     marginBottom: 12,
+  },
+  fetchingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  fetchingText: {
+    color: COLORS.primary,
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 8,
   },
   uploadBtn: {
     marginBottom: 20,

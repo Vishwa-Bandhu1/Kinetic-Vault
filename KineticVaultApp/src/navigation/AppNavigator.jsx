@@ -6,6 +6,7 @@ import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {COLORS} from '../theme';
 import useSmsListener from '../hooks/useSmsListener';
+import useSmsInboxSync from '../hooks/useSmsInboxSync';
 
 // Screens
 import SplashScreen from '../screens/SplashScreen';
@@ -94,6 +95,7 @@ const BottomTabs = () => {
 const AppNavigator = () => {
   const navigationRef = useRef(null);
   const pendingSmsEventsRef = useRef([]);
+  const processedHashesRef = useRef(new Set());
   const [smsAutoScan, setSmsAutoScan] = useState(false);
 
   // Load the user's SMS auto-scan preference
@@ -127,6 +129,19 @@ const AppNavigator = () => {
       const currentRoute = nav.getCurrentRoute();
       // Don't interrupt if already on Processing screen
       if (currentRoute?.name === 'Processing') return false;
+
+      // Duplicate prevention hash across listener and inbox sync
+      const smsHash = `${smsEvent.sender}::${smsEvent.message}`;
+      if (processedHashesRef.current.has(smsHash)) {
+        console.log('[AppNavigator] Ignoring duplicate SMS from:', smsEvent.sender);
+        return true; // Mark as "processed" so it drops
+      }
+
+      processedHashesRef.current.add(smsHash);
+      if (processedHashesRef.current.size > 20) {
+        const arr = Array.from(processedHashesRef.current).slice(-10);
+        processedHashesRef.current = new Set(arr);
+      }
 
       console.log(
         '[AppNavigator] Auto-analyzing SMS from:',
@@ -177,6 +192,7 @@ const AppNavigator = () => {
 
   // Activate the SMS listener only when auto-scan is enabled
   useSmsListener(handleSmsReceived, smsAutoScan);
+  useSmsInboxSync(handleSmsReceived, smsAutoScan);
 
   return (
     <NavigationContainer
