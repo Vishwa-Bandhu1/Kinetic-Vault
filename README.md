@@ -1,6 +1,6 @@
-# Kinetic Vault: AI-Powered SMS & Phishing Protection 🛡️
+# CyberBait: An AI-Powered SMS & Phishing Protection 🛡️
 
-**Kinetic Vault** is a full-stack, cross-platform cybersecurity companion application designed to protect users from scam conversations and phishing threats. It leverages advanced AI models to analyze suspicious texts, extracts insights from images using OCR, and provides real-time protection against malicious SMS messages.
+**CyberBait** is a full-stack, cross-platform cybersecurity companion application designed to protect users from scam conversations and phishing threats. It leverages advanced AI models to analyze suspicious texts, extracts insights from images using OCR, and provides real-time protection against malicious SMS messages.
 
 ---
 
