@@ -7,6 +7,7 @@
 ## 🚀 Features
 
 - **Hybrid SMS Detection**: Combines a native Android BroadcastReceiver with a **Direct Inbox Polling** mechanism (using `react-native-get-sms-android`) to ensure 100% detection reliability, even on devices with aggressive OEM background restrictions (Realme, Oppo, Vivo).
+- **Proactive Sender Blocking**: Integrates Android's Call Screening and Default SMS roles, enabling users to instantly block detected phishing senders directly from the threat analysis screen.
 - **AI-Powered Analysis**: Seamlessly integrates with **MIET AI Gateway (College AI API)** for rapid evaluation of potential cybersecurity threats.
 - **OEM-Specific Optimization**: Specialized fallback mechanisms for **Realme, Oppo, and Vivo** devices to ensure reliable background detection despite aggressive battery management.
 - **Cross-Platform Mobile App**: Built with React Native CLI, featuring a premium dark-mode UI with smooth animations (Reanimated v4, Lottie).
@@ -23,7 +24,7 @@
 - **Framework**: React Native CLI (`react-native` v0.85)
 - **Navigation**: React Navigation v7
 - **UI & Animations**: Reanimated v4, Lottie React Native, React Native Linear Gradient
-- **Native Modules**: Custom Kotlin modules for SMS interception and `react-native-get-sms-android` for robust inbox polling.
+- **Native Modules**: Custom Kotlin modules for SMS interception, call screening, default app role requests, and `react-native-get-sms-android` for robust inbox polling.
 
 ### Backend (Server)
 - **Framework**: Spring Boot 3.4.5 (Java 17)

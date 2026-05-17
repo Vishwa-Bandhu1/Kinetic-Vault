@@ -1,6 +1,9 @@
 package com.kineticvaultapp
 
 import android.Manifest
+import android.app.Activity
+import android.app.role.RoleManager
+import android.content.ContentValues
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,14 +11,19 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
+import android.provider.BlockedNumberContract
 import android.provider.Settings
+import android.provider.Telephony
+import android.telecom.TelecomManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONArray
 import org.json.JSONObject
@@ -30,8 +38,46 @@ class SmsModule(reactContext: ReactApplicationContext) :
     @Volatile
     private var listenerCount = 0
 
+    private var roleRequestPromise: Promise? = null
+    private var roleRequestResponseMode = ROLE_RESPONSE_BOOLEAN
+    private var pendingRoleName = ROLE_NAME_UNKNOWN
+
+    private val activityEventListener = object : ActivityEventListener {
+        override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+            if (requestCode == REQUEST_CODE_CALL_SCREENING || requestCode == REQUEST_CODE_DEFAULT_SMS) {
+                val promise = roleRequestPromise ?: return
+                val responseMode = roleRequestResponseMode
+                val requestedRole = pendingRoleName
+                clearPendingRoleRequest()
+
+                val status = buildBlockingCapability()
+                Log.d(
+                    TAG,
+                    "Role request finished: role=$requestedRole resultCode=$resultCode " +
+                        "canBlock=${status.canBlockSender} defaultSms=${status.isDefaultSmsApp} " +
+                        "callScreening=${status.hasCallScreeningRole}"
+                )
+
+                if (responseMode == ROLE_RESPONSE_STATUS) {
+                    promise.resolve(
+                        status.toWritableMap(
+                            event = "role_request_completed",
+                            requestedRole = requestedRole,
+                            requestResultCode = resultCode
+                        )
+                    )
+                } else {
+                    promise.resolve(status.canBlockSender)
+                }
+            }
+        }
+
+        override fun onNewIntent(intent: Intent) {}
+    }
+
     init {
         smsModuleInstance = this
+        reactContext.addActivityEventListener(activityEventListener)
     }
 
     override fun getName(): String = MODULE_NAME
@@ -162,6 +208,474 @@ class SmsModule(reactContext: ReactApplicationContext) :
     fun removeListeners(count: Int) {
         listenerCount = (listenerCount - count).coerceAtLeast(0)
         Log.d(TAG, "JS listener removed; count=$listenerCount")
+    }
+
+    @ReactMethod
+    fun getSenderBlockStatus(promise: Promise) {
+        val status = buildBlockingCapability()
+        logBlockingCapability("Status check", status)
+        promise.resolve(status.toWritableMap(event = "status_check"))
+    }
+
+    @ReactMethod
+    fun requestSenderBlockingRole(promise: Promise) {
+        val status = buildBlockingCapability()
+        logBlockingCapability("Blocking role request pre-check", status)
+
+        if (status.canBlockSender) {
+            promise.resolve(status.toWritableMap(event = "already_granted"))
+            return
+        }
+
+        if (roleRequestPromise != null) {
+            Log.w(TAG, "Role request ignored because another request is already active")
+            promise.resolve(
+                status.toWritableMap(
+                    event = "role_request_in_progress",
+                    errorCode = "ROLE_REQUEST_IN_PROGRESS",
+                    errorMessage = "Another Android role request is already active."
+                )
+            )
+            return
+        }
+
+        if (
+            startRoleRequest(
+                roleName = ROLE_NAME_CALL_SCREENING,
+                androidRole = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    RoleManager.ROLE_CALL_SCREENING
+                } else {
+                    null
+                },
+                requestCode = REQUEST_CODE_CALL_SCREENING,
+                promise = promise,
+                responseMode = ROLE_RESPONSE_STATUS
+            )
+        ) {
+            return
+        }
+
+        if (startDefaultSmsRoleRequest(promise, ROLE_RESPONSE_STATUS)) {
+            return
+        }
+
+        Log.w(TAG, "No supported Android role request path is available for sender blocking")
+        promise.resolve(
+            status.toWritableMap(
+                event = "role_request_unavailable",
+                errorCode = "ROLE_REQUEST_UNAVAILABLE",
+                errorMessage = "Android did not expose a supported role request screen on this device."
+            )
+        )
+    }
+
+    @ReactMethod
+    fun requestCallScreeningRole(promise: Promise) {
+        val status = buildBlockingCapability()
+        if (status.hasCallScreeningRole || status.isDefaultSmsApp) {
+            promise.resolve(true)
+            return
+        }
+
+        val started = startRoleRequest(
+            roleName = ROLE_NAME_CALL_SCREENING,
+            androidRole = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                RoleManager.ROLE_CALL_SCREENING
+            } else {
+                null
+            },
+            requestCode = REQUEST_CODE_CALL_SCREENING,
+            promise = promise,
+            responseMode = ROLE_RESPONSE_BOOLEAN
+        )
+
+        if (!started) {
+            promise.resolve(false)
+        }
+    }
+
+    @ReactMethod
+    fun requestDefaultSmsRole(promise: Promise) {
+        val status = buildBlockingCapability()
+        if (status.isDefaultSmsApp) {
+            promise.resolve(true)
+            return
+        }
+
+        val started = startDefaultSmsRoleRequest(promise, ROLE_RESPONSE_BOOLEAN)
+        if (!started) {
+            promise.resolve(false)
+        }
+    }
+
+    @ReactMethod
+    fun blockSender(sender: String, promise: Promise) {
+        val trimmedSender = sender.trim()
+        if (trimmedSender.isBlank()) {
+            Log.w(TAG, "Block request rejected: sender is blank")
+            promise.resolve(
+                blockResult(
+                    success = false,
+                    sender = sender,
+                    code = "INVALID_NUMBER",
+                    message = "Sender number is invalid."
+                )
+            )
+            return
+        }
+
+        val status = buildBlockingCapability()
+        logBlockingCapability("Block pre-check", status)
+
+        if (!status.canBlockSender) {
+            Log.w(
+                TAG,
+                "Block request needs Android role: sender=$trimmedSender " +
+                    "defaultSms=${status.isDefaultSmsApp} callScreening=${status.hasCallScreeningRole}"
+            )
+            promise.resolve(
+                blockResult(
+                    success = false,
+                    sender = trimmedSender,
+                    code = "ROLE_REQUIRED",
+                    message = "Android requires Call Screening role or Default SMS app role before this app can block senders.",
+                    requiresRole = true,
+                    status = status
+                )
+            )
+            return
+        }
+
+        try {
+            val contentValues = ContentValues().apply {
+                put(BlockedNumberContract.BlockedNumbers.COLUMN_ORIGINAL_NUMBER, trimmedSender)
+            }
+            val insertedUri = reactApplicationContext.contentResolver.insert(
+                BlockedNumberContract.BlockedNumbers.CONTENT_URI,
+                contentValues
+            )
+
+            if (insertedUri == null) {
+                Log.w(TAG, "BlockedNumberContract insert returned null for sender=$trimmedSender")
+                promise.resolve(
+                    blockResult(
+                        success = false,
+                        sender = trimmedSender,
+                        code = "BLOCK_FAILED",
+                        message = "Android did not add this sender to the blocked list.",
+                        status = status
+                    )
+                )
+                return
+            }
+
+            Log.d(TAG, "Successfully blocked sender=$trimmedSender uri=$insertedUri")
+            promise.resolve(
+                blockResult(
+                    success = true,
+                    sender = trimmedSender,
+                    code = "BLOCKED",
+                    message = "Sender blocked successfully.",
+                    status = buildBlockingCapability()
+                )
+            )
+        } catch (error: SecurityException) {
+            val freshStatus = buildBlockingCapability()
+            Log.e(
+                TAG,
+                "SecurityException while blocking sender=$trimmedSender; " +
+                    "defaultSms=${freshStatus.isDefaultSmsApp} " +
+                    "callScreening=${freshStatus.hasCallScreeningRole}",
+                error
+            )
+            promise.resolve(
+                blockResult(
+                    success = false,
+                    sender = trimmedSender,
+                    code = "PERMISSION_DENIED",
+                    message = error.message
+                        ?: "App needs Call Screening role or to be default SMS app.",
+                    requiresRole = !freshStatus.canBlockSender,
+                    status = freshStatus
+                )
+            )
+        } catch (error: Exception) {
+            Log.e(TAG, "Failed to block sender=$trimmedSender", error)
+            promise.resolve(
+                blockResult(
+                    success = false,
+                    sender = trimmedSender,
+                    code = "BLOCK_FAILED",
+                    message = error.message ?: "Android failed to block this sender.",
+                    status = buildBlockingCapability()
+                )
+            )
+        }
+    }
+
+    private fun buildBlockingCapability(): BlockingCapability {
+        val defaultSmsPackage = getDefaultSmsPackage()
+        val defaultDialerPackage = getDefaultDialerPackage()
+        val isDefaultSmsApp = defaultSmsPackage == reactApplicationContext.packageName
+        val hasCallScreeningRole = isAndroidRoleHeld(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                RoleManager.ROLE_CALL_SCREENING
+            } else {
+                null
+            }
+        )
+        val isCallScreeningRoleAvailable = isAndroidRoleAvailable(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                RoleManager.ROLE_CALL_SCREENING
+            } else {
+                null
+            }
+        )
+        val isSmsRoleAvailable = isAndroidRoleAvailable(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                RoleManager.ROLE_SMS
+            } else {
+                null
+            }
+        ) || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+        val canCurrentUserBlockNumbers = try {
+            BlockedNumberContract.canCurrentUserBlockNumbers(reactApplicationContext)
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to read canCurrentUserBlockNumbers", error)
+            false
+        }
+
+        return BlockingCapability(
+            apiLevel = Build.VERSION.SDK_INT,
+            manufacturer = Build.MANUFACTURER.orEmpty(),
+            brand = Build.BRAND.orEmpty(),
+            model = Build.MODEL.orEmpty(),
+            isRealmeFamily = isRealmeFamilyDevice(),
+            defaultSmsPackage = defaultSmsPackage,
+            defaultDialerPackage = defaultDialerPackage,
+            isDefaultSmsApp = isDefaultSmsApp,
+            hasCallScreeningRole = hasCallScreeningRole,
+            isCallScreeningRoleAvailable = isCallScreeningRoleAvailable,
+            isSmsRoleAvailable = isSmsRoleAvailable,
+            canCurrentUserBlockNumbers = canCurrentUserBlockNumbers,
+            canBlockSender = isDefaultSmsApp || hasCallScreeningRole
+        )
+    }
+
+    private fun startRoleRequest(
+        roleName: String,
+        androidRole: String?,
+        requestCode: Int,
+        promise: Promise,
+        responseMode: String
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || androidRole == null) {
+            Log.d(TAG, "RoleManager unavailable for role=$roleName api=${Build.VERSION.SDK_INT}")
+            return false
+        }
+
+        val roleManager = reactApplicationContext.getSystemService(Context.ROLE_SERVICE) as? RoleManager
+        if (roleManager == null) {
+            Log.w(TAG, "RoleManager service unavailable for role=$roleName")
+            return false
+        }
+
+        return try {
+            if (!roleManager.isRoleAvailable(androidRole)) {
+                Log.w(TAG, "Android role is not available: role=$roleName")
+                return false
+            }
+
+            if (roleManager.isRoleHeld(androidRole)) {
+                Log.d(TAG, "Android role already held: role=$roleName")
+                if (responseMode == ROLE_RESPONSE_STATUS) {
+                    promise.resolve(buildBlockingCapability().toWritableMap(event = "already_granted"))
+                } else {
+                    promise.resolve(true)
+                }
+                return true
+            }
+
+            val activity = reactApplicationContext.currentActivity
+            if (activity == null) {
+                Log.w(TAG, "Cannot request role=$roleName because currentActivity is null")
+                return false
+            }
+
+            val intent = roleManager.createRequestRoleIntent(androidRole)
+            roleRequestPromise = promise
+            roleRequestResponseMode = responseMode
+            pendingRoleName = roleName
+            Log.d(TAG, "Launching Android role request: role=$roleName")
+            activity.startActivityForResult(intent, requestCode)
+            true
+        } catch (error: SecurityException) {
+            clearPendingRoleRequest()
+            Log.e(TAG, "SecurityException while requesting Android role=$roleName", error)
+            false
+        } catch (error: Exception) {
+            clearPendingRoleRequest()
+            Log.e(TAG, "Unable to launch Android role request: role=$roleName", error)
+            false
+        }
+    }
+
+    private fun startDefaultSmsRoleRequest(promise: Promise, responseMode: String): Boolean {
+        val status = buildBlockingCapability()
+        if (status.isDefaultSmsApp) {
+            if (responseMode == ROLE_RESPONSE_STATUS) {
+                promise.resolve(status.toWritableMap(event = "already_granted"))
+            } else {
+                promise.resolve(true)
+            }
+            return true
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val started = startRoleRequest(
+                roleName = ROLE_NAME_DEFAULT_SMS,
+                androidRole = RoleManager.ROLE_SMS,
+                requestCode = REQUEST_CODE_DEFAULT_SMS,
+                promise = promise,
+                responseMode = responseMode
+            )
+            if (started) return true
+        }
+
+        val activity = reactApplicationContext.currentActivity
+        if (activity == null) {
+            Log.w(TAG, "Cannot request Default SMS app role because currentActivity is null")
+            return false
+        }
+
+        return try {
+            val intent = Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT).apply {
+                putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, reactApplicationContext.packageName)
+            }
+            roleRequestPromise = promise
+            roleRequestResponseMode = responseMode
+            pendingRoleName = ROLE_NAME_DEFAULT_SMS
+            Log.d(TAG, "Launching legacy Default SMS app request")
+            activity.startActivityForResult(intent, REQUEST_CODE_DEFAULT_SMS)
+            true
+        } catch (error: Exception) {
+            clearPendingRoleRequest()
+            Log.e(TAG, "Unable to launch Default SMS app request", error)
+            false
+        }
+    }
+
+    private fun getDefaultSmsPackage(): String? {
+        return try {
+            Telephony.Sms.getDefaultSmsPackage(reactApplicationContext)
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to read default SMS package", error)
+            null
+        }
+    }
+
+    private fun getDefaultDialerPackage(): String? {
+        return try {
+            val telecomManager = reactApplicationContext.getSystemService(
+                Context.TELECOM_SERVICE
+            ) as? TelecomManager
+            telecomManager?.defaultDialerPackage
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to read default dialer package", error)
+            null
+        }
+    }
+
+    private fun isAndroidRoleHeld(androidRole: String?): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || androidRole == null) return false
+
+        return try {
+            val roleManager = reactApplicationContext.getSystemService(Context.ROLE_SERVICE) as? RoleManager
+            roleManager?.isRoleHeld(androidRole) == true
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to check Android role held: role=$androidRole", error)
+            false
+        }
+    }
+
+    private fun isAndroidRoleAvailable(androidRole: String?): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || androidRole == null) return false
+
+        return try {
+            val roleManager = reactApplicationContext.getSystemService(Context.ROLE_SERVICE) as? RoleManager
+            roleManager?.isRoleAvailable(androidRole) == true
+        } catch (error: Exception) {
+            Log.w(TAG, "Unable to check Android role availability: role=$androidRole", error)
+            false
+        }
+    }
+
+    private fun blockResult(
+        success: Boolean,
+        sender: String,
+        code: String,
+        message: String,
+        requiresRole: Boolean = false,
+        status: BlockingCapability? = null
+    ): WritableMap {
+        return Arguments.createMap().apply {
+            putBoolean("success", success)
+            putString("sender", sender)
+            putString("code", code)
+            putString("message", message)
+            putBoolean("requiresRole", requiresRole)
+            status?.let { putMap("status", it.toWritableMap(event = "block_result")) }
+        }
+    }
+
+    private fun BlockingCapability.toWritableMap(
+        event: String,
+        requestedRole: String? = null,
+        requestResultCode: Int? = null,
+        errorCode: String? = null,
+        errorMessage: String? = null
+    ): WritableMap {
+        return Arguments.createMap().apply {
+            putString("event", event)
+            putInt("apiLevel", apiLevel)
+            putString("manufacturer", manufacturer)
+            putString("brand", brand)
+            putString("model", model)
+            putBoolean("isRealmeFamily", isRealmeFamily)
+            putString("defaultSmsPackage", defaultSmsPackage)
+            putString("defaultDialerPackage", defaultDialerPackage)
+            putBoolean("isDefaultSmsApp", isDefaultSmsApp)
+            putBoolean("hasCallScreeningRole", hasCallScreeningRole)
+            putBoolean("isCallScreeningRoleAvailable", isCallScreeningRoleAvailable)
+            putBoolean("isSmsRoleAvailable", isSmsRoleAvailable)
+            putBoolean("canCurrentUserBlockNumbers", canCurrentUserBlockNumbers)
+            putBoolean("canBlockSender", canBlockSender)
+            requestedRole?.let { putString("requestedRole", it) }
+            requestResultCode?.let { putInt("requestResultCode", it) }
+            errorCode?.let { putString("errorCode", it) }
+            errorMessage?.let { putString("errorMessage", it) }
+        }
+    }
+
+    private fun logBlockingCapability(prefix: String, status: BlockingCapability) {
+        Log.d(
+            TAG,
+            "$prefix: api=${status.apiLevel} manufacturer=${status.manufacturer} " +
+                "model=${status.model} realmeFamily=${status.isRealmeFamily} " +
+                "defaultSms=${status.isDefaultSmsApp} defaultSmsPackage=${status.defaultSmsPackage} " +
+                "callScreening=${status.hasCallScreeningRole} " +
+                "callScreeningAvailable=${status.isCallScreeningRoleAvailable} " +
+                "smsRoleAvailable=${status.isSmsRoleAvailable} " +
+                "defaultDialer=${status.defaultDialerPackage} " +
+                "canCurrentUserBlockNumbers=${status.canCurrentUserBlockNumbers} " +
+                "canBlock=${status.canBlockSender}"
+        )
+    }
+
+    private fun clearPendingRoleRequest() {
+        roleRequestPromise = null
+        roleRequestResponseMode = ROLE_RESPONSE_BOOLEAN
+        pendingRoleName = ROLE_NAME_UNKNOWN
     }
 
     private fun openAppSettings() {
@@ -351,6 +865,7 @@ class SmsModule(reactContext: ReactApplicationContext) :
 
     companion object {
         const val SOURCE_BROADCAST_RECEIVER = "broadcast_receiver"
+        const val SOURCE_DEFAULT_SMS_RECEIVER = "default_sms_receiver"
         const val SOURCE_NOTIFICATION_LISTENER = "notification_listener"
 
         private const val TAG = "SmsModule"
@@ -362,6 +877,13 @@ class SmsModule(reactContext: ReactApplicationContext) :
         private const val KEY_RECENT_EVENTS = "recent_sms_events"
         private const val MAX_PENDING_EVENTS = 25
         private const val DEDUPE_WINDOW_MS = 2 * 60 * 1000L
+        private const val REQUEST_CODE_CALL_SCREENING = 1001
+        private const val REQUEST_CODE_DEFAULT_SMS = 1002
+        private const val ROLE_RESPONSE_BOOLEAN = "boolean"
+        private const val ROLE_RESPONSE_STATUS = "status"
+        private const val ROLE_NAME_CALL_SCREENING = "call_screening"
+        private const val ROLE_NAME_DEFAULT_SMS = "default_sms"
+        private const val ROLE_NAME_UNKNOWN = "unknown"
 
         @Volatile
         private var smsModuleInstance: SmsModule? = null
@@ -555,4 +1077,20 @@ private data class PendingSmsEvent(
     val message: String,
     val source: String,
     val timestamp: Double
+)
+
+private data class BlockingCapability(
+    val apiLevel: Int,
+    val manufacturer: String,
+    val brand: String,
+    val model: String,
+    val isRealmeFamily: Boolean,
+    val defaultSmsPackage: String?,
+    val defaultDialerPackage: String?,
+    val isDefaultSmsApp: Boolean,
+    val hasCallScreeningRole: Boolean,
+    val isCallScreeningRoleAvailable: Boolean,
+    val isSmsRoleAvailable: Boolean,
+    val canCurrentUserBlockNumbers: Boolean,
+    val canBlockSender: Boolean
 )

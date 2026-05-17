@@ -33,7 +33,7 @@ const HistoryScreen = ({navigation}) => {
       setScans(data);
       setFiltered(data);
     } catch (error) {
-      console.error('History load error:', error);
+      console.log('History load error:', error?.message || error);
     } finally {
       setLoading(false);
     }

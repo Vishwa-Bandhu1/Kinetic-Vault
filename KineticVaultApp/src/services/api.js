@@ -1,9 +1,15 @@
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {NativeModules, Platform} from 'react-native';
 
 // Set this to true when testing against the live Render backend.
 const USE_DEPLOYED = false;
 const DEPLOYED_URL = 'https://kineticvault-backend.onrender.com/api';
+const SCAN_HISTORY_KEY = 'scan_history';
+const MAX_LOCAL_HISTORY_ITEMS = 100;
+// Optional local override. Examples: '10.0.2.2' for Android emulator,
+// your computer's LAN IP for a physical device over Wi-Fi.
+const LOCAL_BACKEND_HOST_OVERRIDE = '';
 
 const getHostFromUrl = url => {
   const match = url?.match(/^https?:\/\/\[?([^:/\]]+)\]?(?::\d+)?/);
@@ -46,6 +52,10 @@ const isLikelyAndroidEmulator = () => {
 };
 
 const getLocalHost = () => {
+  if (LOCAL_BACKEND_HOST_OVERRIDE) {
+    return LOCAL_BACKEND_HOST_OVERRIDE;
+  }
+
   if (Platform.OS === 'android') {
     if (bundlerHost === '10.0.3.2') {
       return '10.0.3.2';
@@ -59,13 +69,42 @@ const getLocalHost = () => {
   return bundlerHost || '127.0.0.1';
 };
 
-const LOCAL_HOST = getLocalHost();
-const LOCAL_URL = `http://${LOCAL_HOST}:8080/api`;
+const buildLocalUrl = host => `http://${host}:8080/api`;
 
-const BASE_URL = USE_DEPLOYED ? DEPLOYED_URL : LOCAL_URL;
+const unique = values => [...new Set(values.filter(Boolean))];
+
+const getLocalHostCandidates = () => {
+  const hosts = [getLocalHost()];
+
+  if (Platform.OS === 'android') {
+    if (bundlerHost === '10.0.3.2') {
+      hosts.push('10.0.3.2');
+    } else {
+      hosts.push('10.0.2.2', '127.0.0.1');
+    }
+
+    if (!isLoopbackHost(bundlerHost)) {
+      hosts.push(bundlerHost);
+    }
+  }
+
+  return unique(hosts);
+};
+
+const LOCAL_HOST = getLocalHost();
+const API_BASE_URLS = USE_DEPLOYED
+  ? [DEPLOYED_URL]
+  : getLocalHostCandidates().map(buildLocalUrl);
+
+const BASE_URL = API_BASE_URLS[0];
 const API_TIMEOUT_MS = 30000;
+const TEXT_ANALYSIS_TIMEOUT_MS = 8000;
 const IMAGE_TIMEOUT_MS = 70000;
+const HISTORY_TIMEOUT_MS = 4000;
 const API_RETRY_ATTEMPTS = 2;
+const isAndroidReverseHost =
+  Platform.OS === 'android' && LOCAL_HOST === '127.0.0.1';
+let activeBaseUrl = BASE_URL;
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -77,6 +116,7 @@ console.log(
   USE_DEPLOYED ? 'Render (deployed)' : LOCAL_HOST,
   'baseURL:',
   BASE_URL,
+  API_BASE_URLS.length > 1 ? `fallbacks: ${API_BASE_URLS.slice(1).join(', ')}` : '',
 );
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -89,15 +129,18 @@ const isRetryableError = error => {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 };
 
-const requestWithRetry = async requestFactory => {
+const requestWithRetry = async (
+  requestFactory,
+  attempts = API_RETRY_ATTEMPTS,
+) => {
   let lastError;
 
-  for (let attempt = 0; attempt <= API_RETRY_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
     try {
       return await requestFactory();
     } catch (error) {
       lastError = error;
-      if (attempt === API_RETRY_ATTEMPTS || !isRetryableError(error)) {
+      if (attempt === attempts || !isRetryableError(error)) {
         throw error;
       }
       await sleep(400 * (attempt + 1));
@@ -106,6 +149,13 @@ const requestWithRetry = async requestFactory => {
 
   throw lastError;
 };
+
+const logRecoverableApiIssue = (...args) => {
+  console.log(...args);
+};
+
+const getNextBaseUrl = triedBaseUrls =>
+  API_BASE_URLS.find(baseUrl => !triedBaseUrls.includes(baseUrl));
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -208,6 +258,7 @@ const normalizeEntities = entities => ({
 });
 
 const normalizeAnalysisResult = (data, originalMessage = '') => {
+  console.log('[API] Parsing JSON response & normalizing analysis result...');
   const safeData = data && typeof data === 'object' ? data : {};
   let riskScore = clamp(
     Math.round(toNumber(safeData.riskScore ?? safeData.score ?? safeData.risk, 5)),
@@ -260,6 +311,140 @@ const normalizeAnalysisResult = (data, originalMessage = '') => {
     content: safeData.content || originalMessage,
     createdAt: safeData.createdAt || new Date().toISOString(),
   };
+};
+
+const createLocalHistoryId = () =>
+  `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const getHistoryTimestamp = item => {
+  const timestamp = Date.parse(item?.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const getHistoryKey = item => {
+  if (item?.id) {
+    return `id:${item.id}`;
+  }
+
+  const content = String(item?.content || '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 160);
+  const createdMinute = Math.floor(getHistoryTimestamp(item) / 60000);
+  return `scan:${content}:${item?.riskScore}:${createdMinute}`;
+};
+
+const normalizeHistoryItem = item => {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  const normalized = normalizeAnalysisResult(
+    item,
+    item.content || item.message || '',
+  );
+
+  return {
+    ...item,
+    ...normalized,
+    sender: item.sender,
+    scanType: item.scanType || item.type,
+  };
+};
+
+const mergeHistoryItems = (...historyLists) => {
+  const byKey = new Map();
+
+  historyLists.flat().forEach(item => {
+    const normalized = normalizeHistoryItem(item);
+    if (!normalized) {
+      return;
+    }
+
+    const key = getHistoryKey(normalized);
+    const current = byKey.get(key);
+    byKey.set(
+      key,
+      current
+        ? {
+            ...current,
+            ...normalized,
+            sender: current.sender || normalized.sender,
+            scanType: current.scanType || normalized.scanType,
+          }
+        : normalized,
+    );
+  });
+
+  return [...byKey.values()].sort(
+    (a, b) => getHistoryTimestamp(b) - getHistoryTimestamp(a),
+  );
+};
+
+const readLocalHistory = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(SCAN_HISTORY_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return mergeHistoryItems(parsed).slice(0, MAX_LOCAL_HISTORY_ITEMS);
+  } catch (error) {
+    logRecoverableApiIssue(
+      '[API] Failed to read local scan history:',
+      error.message,
+    );
+    return [];
+  }
+};
+
+const writeLocalHistory = async history => {
+  try {
+    await AsyncStorage.setItem(
+      SCAN_HISTORY_KEY,
+      JSON.stringify(history.slice(0, MAX_LOCAL_HISTORY_ITEMS)),
+    );
+  } catch (error) {
+    logRecoverableApiIssue(
+      '[API] Failed to save local scan history:',
+      error.message,
+    );
+  }
+};
+
+export const saveScanToHistory = async (scan, metadata = {}) => {
+  try {
+    const normalized = normalizeAnalysisResult(
+      {...scan, ...metadata},
+      scan?.content || metadata.message || '',
+    );
+    const historyItem = {
+      ...metadata,
+      ...normalized,
+      id: normalized.id || scan?.id || createLocalHistoryId(),
+      sender: metadata.sender || scan?.sender,
+      scanType: metadata.scanType || metadata.type || scan?.scanType || scan?.type,
+    };
+    const localHistory = await readLocalHistory();
+    const nextHistory = mergeHistoryItems([historyItem], localHistory).slice(
+      0,
+      MAX_LOCAL_HISTORY_ITEMS,
+    );
+
+    await writeLocalHistory(nextHistory);
+    return historyItem;
+  } catch (error) {
+    logRecoverableApiIssue(
+      '[API] Could not cache scan result locally:',
+      error.message,
+    );
+    return scan;
+  }
 };
 
 const URL_PATTERN =
@@ -380,6 +565,8 @@ api.interceptors.request.use(
 // Response interceptor for error handling logs
 api.interceptors.response.use(
   response => {
+    activeBaseUrl = response.config.baseURL || BASE_URL;
+    api.defaults.baseURL = activeBaseUrl;
     console.log(
       `[API Response] ${response.config.url} => Status:`,
       response.status,
@@ -394,11 +581,30 @@ api.interceptors.response.use(
         error.response.data,
       );
     } else if (error.request) {
-      console.error(
-        '[API Error - No Response Received]',
-        `${BASE_URL} did not respond.`,
+      const currentBaseUrl = error.config?.baseURL || BASE_URL;
+      const triedBaseUrls = unique([
+        ...(error.config?._triedBaseUrls || []),
+        currentBaseUrl,
+      ]);
+      const nextBaseUrl = USE_DEPLOYED ? undefined : getNextBaseUrl(triedBaseUrls);
+
+      if (nextBaseUrl && error.config) {
+        logRecoverableApiIssue(
+          '[API Warning - Retrying with alternate backend host]',
+          `${currentBaseUrl} did not respond. Trying ${nextBaseUrl}.`,
+        );
+        return api.request({
+          ...error.config,
+          baseURL: nextBaseUrl,
+          _triedBaseUrls: [...triedBaseUrls, nextBaseUrl],
+        });
+      }
+
+      logRecoverableApiIssue(
+        '[API Warning - No Response Received]',
+        `${triedBaseUrls.join(', ')} did not respond.`,
         'Ensure Spring Boot is running on port 8080.',
-        Platform.OS === 'android' && LOCAL_HOST === '127.0.0.1'
+        isAndroidReverseHost
           ? 'For a physical Android device, run: npm run reverse:backend or adb reverse tcp:8080 tcp:8080'
           : '',
         error.message,
@@ -413,16 +619,34 @@ api.interceptors.response.use(
 /**
  * Analyze a text message for threats.
  */
-export const analyzeMessage = async message => {
+export const analyzeMessage = async (message, metadata = {}) => {
   try {
-    const response = await requestWithRetry(() => api.post('/analyze', {message}));
-    return normalizeAnalysisResult(response.data, message);
+    const response = await requestWithRetry(
+      () => api.post('/analyze', {message}, {timeout: TEXT_ANALYSIS_TIMEOUT_MS}),
+      0,
+    );
+    const result = normalizeAnalysisResult(response.data, message);
+    await saveScanToHistory(result, {
+      ...metadata,
+      message,
+      scanType: metadata.scanType || 'text',
+    });
+    return result;
   } catch (error) {
-    console.error('[API] Text analysis failed after retries, using local fallback:', error.message);
-    return buildLocalTextFallback(
+    logRecoverableApiIssue(
+      '[API] Text analysis unavailable after retries, using local fallback:',
+      error.message,
+    );
+    const fallbackResult = buildLocalTextFallback(
       message,
       'Backend analysis was temporarily unavailable, so Kinetic Vault used local scam detection rules.',
     );
+    await saveScanToHistory(fallbackResult, {
+      ...metadata,
+      message,
+      scanType: metadata.scanType || 'text',
+    });
+    return fallbackResult;
   }
 };
 
@@ -447,10 +671,17 @@ export const analyzeImage = async imageFile => {
         timeout: IMAGE_TIMEOUT_MS,
       }),
     );
-    return normalizeAnalysisResult(response.data);
+    const result = normalizeAnalysisResult(response.data);
+    await saveScanToHistory(result, {scanType: 'image'});
+    return result;
   } catch (error) {
-    console.error('[API] Image analysis failed after retries, using safe fallback:', error.message);
-    return buildImageFallback();
+    logRecoverableApiIssue(
+      '[API] Image analysis unavailable after retries, using safe fallback:',
+      error.message,
+    );
+    const fallbackResult = buildImageFallback();
+    await saveScanToHistory(fallbackResult, {scanType: 'image'});
+    return fallbackResult;
   }
 };
 
@@ -458,7 +689,7 @@ export const analyzeImage = async imageFile => {
  * Generate a report for a given message ID.
  */
 export const generateReport = async messageId => {
-  const response = await api.post('/report', {messageId});
+  const response = await requestWithRetry(() => api.post('/report', {messageId}));
   return response.data;
 };
 
@@ -466,15 +697,35 @@ export const generateReport = async messageId => {
  * Get scan history.
  */
 export const getHistory = async () => {
-  const response = await api.get('/history');
-  return response.data;
+  const localHistory = await readLocalHistory();
+
+  try {
+    const response = await api.get('/history', {timeout: HISTORY_TIMEOUT_MS});
+    const remoteHistory = Array.isArray(response.data) ? response.data : [];
+    const mergedHistory = mergeHistoryItems(remoteHistory, localHistory).slice(
+      0,
+      MAX_LOCAL_HISTORY_ITEMS,
+    );
+
+    if (mergedHistory.length > 0) {
+      await writeLocalHistory(mergedHistory);
+    }
+
+    return mergedHistory;
+  } catch (error) {
+    logRecoverableApiIssue(
+      '[API] History unavailable, showing local scan history:',
+      error.message,
+    );
+    return localHistory;
+  }
 };
 
 /**
  * Get PDF report URL for a message.
  */
 export const getPdfReportUrl = messageId => {
-  return `${BASE_URL}/report/pdf/${messageId}`;
+  return `${activeBaseUrl}/report/pdf/${messageId}`;
 };
 
 export default api;

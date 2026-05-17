@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {View, Text, StyleSheet, Animated, Dimensions} from 'react-native';
 import {COLORS} from '../theme';
 import {analyzeMessage, analyzeImage} from '../services/api';
@@ -6,13 +6,50 @@ import {analyzeMessage, analyzeImage} from '../services/api';
 const {width} = Dimensions.get('window');
 
 const ProcessingScreen = ({route, navigation}) => {
-  const {message, imageFile, type} = route.params;
+  const {message, sender, imageFile, type} = route.params;
   const [statusText, setStatusText] = useState('Initializing AI Engine...');
 
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
   const dotAnim = useRef(new Animated.Value(0)).current;
+
+  const performAnalysis = useCallback(async () => {
+    console.log(`[Processing] performAnalysis started. Type: ${type}`);
+    try {
+      let result;
+      console.log(`[Processing] Sending API request to backend...`);
+      if (type === 'image' && imageFile) {
+        result = await analyzeImage(imageFile);
+      } else {
+        result = await analyzeMessage(message, {sender});
+      }
+
+      console.log(`[Processing] API response received and parsed successfully.`);
+      console.log(`[Processing] AI Response Result: IsThreat=${result.isThreat}, RiskScore=${result.riskScore}, ThreatLevel=${result.threatLevel}`);
+
+      // Navigate to appropriate result screen
+      if (result.riskScore > 40) {
+        console.log(`[Processing] Triggering navigation: Final Screen = AnalysisResult (Threat)`);
+        navigation.replace('AnalysisResult', {result, sender});
+      } else {
+        console.log(`[Processing] Triggering navigation: Final Screen = SafeResult (Safe)`);
+        navigation.replace('SafeResult', {result, sender});
+      }
+    } catch (error) {
+      console.error('[Processing] Analysis error:', error);
+      const errorType = error.response?.data?.error || 'API_ERROR';
+      const errorMessage =
+        error.response?.data?.message || error.message || 'Analysis failed';
+      console.log(`[Processing] Triggering navigation: Final Screen = Error (${errorType})`);
+
+      navigation.replace('Error', {
+        errorType,
+        errorMessage,
+        retryParams: route.params,
+      });
+    }
+  }, [imageFile, message, navigation, route.params, sender, type]);
 
   useEffect(() => {
     // Pulse animation
@@ -78,36 +115,7 @@ const ProcessingScreen = ({route, navigation}) => {
 
     // API Call
     performAnalysis();
-  }, []);
-
-  const performAnalysis = async () => {
-    try {
-      let result;
-      if (type === 'image' && imageFile) {
-        result = await analyzeImage(imageFile);
-      } else {
-        result = await analyzeMessage(message);
-      }
-
-      // Navigate to appropriate result screen
-      if (result.riskScore > 40) {
-        navigation.replace('AnalysisResult', {result});
-      } else {
-        navigation.replace('SafeResult', {result});
-      }
-    } catch (error) {
-      console.error('Analysis error:', error);
-      const errorType = error.response?.data?.error || 'API_ERROR';
-      const errorMessage =
-        error.response?.data?.message || error.message || 'Analysis failed';
-
-      navigation.replace('Error', {
-        errorType,
-        errorMessage,
-        retryParams: route.params,
-      });
-    }
-  };
+  }, [dotAnim, performAnalysis, progressAnim, pulseAnim, rotateAnim]);
 
   const spin = rotateAnim.interpolate({
     inputRange: [0, 1],

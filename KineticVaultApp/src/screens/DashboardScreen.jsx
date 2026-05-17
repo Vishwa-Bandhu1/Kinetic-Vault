@@ -40,7 +40,7 @@ const DashboardScreen = ({navigation}) => {
         setStatus('SAFE');
       }
     } catch (error) {
-      console.log('Dashboard load error:', error);
+      console.log('Dashboard load error:', error?.message || error);
     }
   };
 

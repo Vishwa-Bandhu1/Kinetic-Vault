@@ -3,8 +3,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
+    <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.READ_BLOCKED_NUMBERS" />
+    <uses-permission android:name="android.permission.WRITE_BLOCKED_NUMBERS" />
 
     <application
       android:name=".MainApplication"
@@ -28,6 +33,21 @@
         </intent-filter>
       </activity>
 
+      <!-- Required SENDTO endpoint so Android can offer this app as a Default SMS candidate. -->
+      <activity
+        android:name=".SmsComposeActivity"
+        android:label="@string/app_name"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.intent.action.SENDTO" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:scheme="sms" />
+            <data android:scheme="smsto" />
+            <data android:scheme="mms" />
+            <data android:scheme="mmsto" />
+        </intent-filter>
+      </activity>
+
       <!-- SMS BroadcastReceiver for auto-scan feature -->
       <receiver
         android:name=".SmsReceiver"
@@ -38,6 +58,42 @@
         </intent-filter>
       </receiver>
 
+      <!-- Required receiver for Default SMS app role qualification. -->
+      <receiver
+        android:name=".DefaultSmsReceiver"
+        android:permission="android.permission.BROADCAST_SMS"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.provider.Telephony.SMS_DELIVER" />
+        </intent-filter>
+      </receiver>
+
+      <!-- Required MMS endpoint for Default SMS app role qualification. -->
+      <receiver
+        android:name=".MmsReceiver"
+        android:permission="android.permission.BROADCAST_WAP_PUSH"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+            <data android:mimeType="application/vnd.wap.mms-message" />
+        </intent-filter>
+      </receiver>
+
+      <!-- Required respond-via-message endpoint for Default SMS app role qualification. -->
+      <service
+        android:name=".SmsRespondViaMessageService"
+        android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:scheme="sms" />
+            <data android:scheme="smsto" />
+            <data android:scheme="mms" />
+            <data android:scheme="mmsto" />
+        </intent-filter>
+      </service>
+
       <!-- Fallback path for OEMs such as Realme UI that may delay/block SMS broadcasts. -->
       <service
         android:name=".SmsNotificationListenerService"
@@ -46,6 +102,16 @@
         android:exported="true">
         <intent-filter>
             <action android:name="android.service.notification.NotificationListenerService" />
+        </intent-filter>
+      </service>
+
+      <!-- Required for ROLE_CALL_SCREENING to enable blocking SMS natively without being Default SMS app -->
+      <service
+        android:name=".CyberBaitCallScreeningService"
+        android:permission="android.permission.BIND_SCREENING_SERVICE"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.telecom.CallScreeningService" />
         </intent-filter>
       </service>
     </application>

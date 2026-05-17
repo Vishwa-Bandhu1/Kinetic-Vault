@@ -1,14 +1,19 @@
-import React from 'react';
-import {View, Text, StyleSheet, ScrollView, TouchableOpacity} from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, NativeModules } from 'react-native';
 import ScreenWrapper from '../components/ScreenWrapper';
 import GlassCard from '../components/GlassCard';
 import NeonButton from '../components/NeonButton';
 import RiskMeter from '../components/RiskMeter';
 import KeywordBadge from '../components/KeywordBadge';
-import {COLORS} from '../theme';
+import { COLORS } from '../theme';
 
-const AnalysisResultScreen = ({route, navigation}) => {
-  const {result} = route.params;
+const AnalysisResultScreen = ({ route, navigation }) => {
+  const { result, sender } = route.params;
+  const [isBlocking, setIsBlocking] = useState(false);
+
+  // Determine the sender to block. If passed via navigation, use it.
+  // Otherwise, if entities has phone numbers, use the first one.
+  const senderToBlock = sender || (result.entities?.phoneNumbers?.[0]);
 
   const getThreatColor = () => {
     if (result.riskScore <= 40) return COLORS.riskLow;
@@ -19,6 +24,152 @@ const AnalysisResultScreen = ({route, navigation}) => {
 
   const threatColor = getThreatColor();
 
+  const handleBlockMessage = () => {
+    if (!senderToBlock) {
+      Alert.alert(
+        'Sender Unavailable',
+        'Could not determine the sender\'s phone number to block. This message might have been scanned from history or an image.',
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Block Sender',
+      `Are you sure you want to block this sender (${senderToBlock})?\n\nYou will no longer receive SMS messages from them.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: executeBlock,
+        },
+      ],
+    );
+  };
+
+  const logBlockStatus = (label, status) => {
+    if (!status) {
+      console.log(`[Block] ${label}: status unavailable`);
+      return;
+    }
+
+    console.log(
+      `[Block] ${label}: canBlock=${Boolean(status.canBlockSender)} ` +
+        `defaultSms=${Boolean(status.isDefaultSmsApp)} ` +
+        `callScreening=${Boolean(status.hasCallScreeningRole)} ` +
+        `api=${status.apiLevel} manufacturer=${status.manufacturer || 'unknown'}`,
+    );
+  };
+
+  const getPermissionMessage = status => {
+    const realmeNote = status?.isRealmeFamily
+      ? '\n\nOn Realme/Oppo/OnePlus, approve the Caller ID & spam or Default SMS screen if Android shows it.'
+      : '';
+
+    return (
+      'Android only allows sender blocking when this app has the Call Screening role or is selected as the Default SMS app. ' +
+      'Tap Continue, approve the Android permission screen, and Kinetic Vault will retry the block automatically.' +
+      realmeNote
+    );
+  };
+
+  const showBlockFailure = message => {
+    Alert.alert(
+      'Block Failed',
+      message ||
+        'Could not block the sender. Please grant the Android blocking role and try again.',
+    );
+  };
+
+  const promptForBlockingRole = status => {
+    Alert.alert('Permission Required', getPermissionMessage(status), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Continue',
+        onPress: requestBlockingRoleAndRetry,
+      },
+    ]);
+  };
+
+  const handleBlockResult = (blockResult, fallbackStatus) => {
+    console.log('[Block] Block result:', blockResult);
+
+    if (blockResult?.success) {
+      Alert.alert('Success', `Successfully blocked ${senderToBlock}.`);
+      return true;
+    }
+
+    if (blockResult?.requiresRole) {
+      promptForBlockingRole(blockResult.status || fallbackStatus);
+      return true;
+    }
+
+    showBlockFailure(blockResult?.message);
+    return false;
+  };
+
+  const requestBlockingRoleAndRetry = async () => {
+    setIsBlocking(true);
+    const { SmsModule } = NativeModules;
+
+    try {
+      if (!SmsModule) {
+        throw new Error('SmsModule is not available');
+      }
+
+      console.log('[Block] Requesting Android sender-blocking role...');
+      const roleStatus = await SmsModule.requestSenderBlockingRole();
+      logBlockStatus('Role request result', roleStatus);
+
+      if (!roleStatus?.canBlockSender) {
+        showBlockFailure(
+          roleStatus?.errorMessage ||
+            'Android did not grant the required blocking role. Open Default Apps or Caller ID & spam settings, grant the role, then try again.',
+        );
+        return;
+      }
+
+      console.log('[Block] Role granted; retrying block:', senderToBlock);
+      const blockResult = await SmsModule.blockSender(senderToBlock);
+      handleBlockResult(blockResult, roleStatus);
+    } catch (error) {
+      console.log('[Block] Role request handled safely:', error?.message || error);
+      showBlockFailure(error?.message);
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
+  const executeBlock = async () => {
+    setIsBlocking(true);
+    const { SmsModule } = NativeModules;
+
+    try {
+      if (!SmsModule) {
+        throw new Error('SmsModule is not available');
+      }
+
+      const status = SmsModule.getSenderBlockStatus
+        ? await SmsModule.getSenderBlockStatus()
+        : null;
+      logBlockStatus('Initial status', status);
+
+      if (!status?.canBlockSender) {
+        promptForBlockingRole(status);
+        return;
+      }
+
+      console.log('[Block] Attempting to block:', senderToBlock);
+      const blockResult = await SmsModule.blockSender(senderToBlock);
+      handleBlockResult(blockResult, status);
+    } catch (error) {
+      console.log('[Block] Block flow handled safely:', error?.message || error);
+      showBlockFailure(error?.message);
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
   return (
     <ScreenWrapper>
       <ScrollView showsVerticalScrollIndicator={false}>
@@ -28,7 +179,7 @@ const AnalysisResultScreen = ({route, navigation}) => {
             <Text style={styles.backText}>‹ Back</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Threat Analysis</Text>
-          <View style={{width: 60}} />
+          <View style={{ width: 60 }} />
         </View>
 
         {/* Warning Banner */}
@@ -36,7 +187,7 @@ const AnalysisResultScreen = ({route, navigation}) => {
           <View style={styles.warningContent}>
             <Text style={styles.warningEmoji}>⚠️</Text>
             <View style={styles.warningTextContainer}>
-              <Text style={[styles.warningTitle, {color: threatColor}]}>
+              <Text style={[styles.warningTitle, { color: threatColor }]}>
                 THREAT DETECTED
               </Text>
               <Text style={styles.warningSubtitle}>
@@ -61,8 +212,8 @@ const AnalysisResultScreen = ({route, navigation}) => {
             </View>
             <View style={styles.confidenceDivider} />
             <View style={styles.confidenceItem}>
-              <Text 
-                style={[styles.confidenceValue, {color: threatColor}]}
+              <Text
+                style={[styles.confidenceValue, { color: threatColor }]}
                 numberOfLines={1}
                 adjustsFontSizeToFit
                 minimumFontScale={0.5}
@@ -130,9 +281,10 @@ const AnalysisResultScreen = ({route, navigation}) => {
 
         {/* Actions */}
         <NeonButton
-          title="📄 Generate Report"
-          onPress={() => navigation.navigate('ThreatReport', {result})}
+          title={isBlocking ? "🚫 Blocking..." : "🚫 Block Sender"}
+          onPress={handleBlockMessage}
           style={styles.reportBtn}
+          disabled={isBlocking}
         />
         <NeonButton
           title="🔍 Scan Another"
@@ -141,13 +293,13 @@ const AnalysisResultScreen = ({route, navigation}) => {
           style={styles.scanBtn}
         />
 
-        <View style={{height: 40}} />
+        <View style={{ height: 40 }} />
       </ScrollView>
     </ScreenWrapper>
   );
 };
 
-const EntityRow = ({label, items, emptyText}) => (
+const EntityRow = ({ label, items, emptyText }) => (
   <View style={styles.entityRow}>
     <Text style={styles.entityLabel}>{label}</Text>
     {items.length > 0 ? (

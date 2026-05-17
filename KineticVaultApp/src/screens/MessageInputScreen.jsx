@@ -92,9 +92,27 @@ const ensureSmsPermission = async () => {
 /**
  * Fetch the single most-recent SMS from the device inbox.
  * Returns a Promise that resolves to the SMS body string, or null on failure.
+ * Includes a timeout to prevent silent hanging on Realme/Android 13 devices.
  */
 const fetchLatestSms = () => {
   return new Promise(resolve => {
+    let isResolved = false;
+    let timeoutId;
+
+    const finish = (result) => {
+      if (isResolved) return;
+      isResolved = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      console.log(`[SMS] Fetch resolved with: ${result ? 'SUCCESS' : 'NULL'}`);
+      resolve(result);
+    };
+
+    // Timeout fallback to prevent infinite loading
+    timeoutId = setTimeout(() => {
+      console.error('[SMS] Read timeout after 5000ms. Returning null.');
+      finish(null);
+    }, 5000);
+
     const filter = {
       box: 'inbox',
       maxCount: 1, // Only the very latest message
@@ -106,7 +124,7 @@ const fetchLatestSms = () => {
       JSON.stringify(filter),
       fail => {
         console.error('[SMS] Inbox read failed:', fail);
-        resolve(null);
+        finish(null);
       },
       (_count, smsListStr) => {
         try {
@@ -115,7 +133,7 @@ const fetchLatestSms = () => {
 
           if (!smsList || smsList.length === 0) {
             console.warn('[SMS] Inbox is empty');
-            resolve(null);
+            finish(null);
             return;
           }
 
@@ -131,14 +149,17 @@ const fetchLatestSms = () => {
 
           if (!latest.body || !latest.body.trim()) {
             console.warn('[SMS] Latest SMS has no body text');
-            resolve(null);
+            finish(null);
             return;
           }
 
-          resolve(latest.body.trim());
+          finish({
+            body: latest.body.trim(),
+            sender: latest.address,
+          });
         } catch (parseError) {
           console.error('[SMS] Parse error:', parseError);
-          resolve(null);
+          finish(null);
         }
       },
     );
@@ -150,10 +171,13 @@ const MessageInputScreen = ({navigation}) => {
   const [isFetching, setIsFetching] = useState(false);
 
   const handleAnalyze = useCallback(async () => {
+    console.log('[Analyze] Button Clicked: Starting analysis flow');
+    
     // If user already typed a message, use it directly
     if (message.trim()) {
       console.log('[Analyze] Using user-typed message (' + message.trim().length + ' chars)');
       Keyboard.dismiss();
+      console.log('[Analyze] Navigating to Processing screen with custom message...');
       navigation.navigate('Processing', {message: message.trim(), type: 'text'});
       return;
     }
@@ -164,6 +188,7 @@ const MessageInputScreen = ({navigation}) => {
 
     try {
       // Step 1: Ensure permissions
+      console.log('[Analyze] Checking SMS permissions...');
       const hasPermission = await ensureSmsPermission();
       if (!hasPermission) {
         console.warn('[Analyze] SMS permission denied');
@@ -174,36 +199,43 @@ const MessageInputScreen = ({navigation}) => {
         setIsFetching(false);
         return;
       }
+      console.log('[Analyze] SMS permissions granted.');
 
       // Step 2: Fetch the latest SMS
-      const smsBody = await fetchLatestSms();
+      console.log('[Analyze] Awaiting fetchLatestSms()...');
+      const smsData = await fetchLatestSms();
 
-      if (!smsBody) {
+      if (!smsData) {
         console.warn('[Analyze] No SMS found in inbox');
         Alert.alert(
           'No SMS Found',
-          'Your SMS inbox appears to be empty. Please paste a message manually or try again after receiving an SMS.',
+          'Your SMS inbox appears to be empty or an error occurred. Please paste a message manually or try again after receiving an SMS.',
         );
         setIsFetching(false);
         return;
       }
 
       // Step 3: Fill the input field with the fetched SMS
-      console.log('[Analyze] SMS fetched successfully, auto-filling input...');
-      setMessage(smsBody);
+      console.log(`[Analyze] SMS fetched successfully. Sender: ${smsData.sender}, Body Length: ${smsData.body.length}`);
+      setMessage(smsData.body);
 
       // Step 4: Immediately trigger analysis (don't wait for re-render)
-      console.log('[Analyze] Navigating to Processing screen...');
+      console.log('[Analyze] Triggering Navigation to Processing screen...');
       Keyboard.dismiss();
-      navigation.navigate('Processing', {message: smsBody, type: 'text'});
+      navigation.navigate('Processing', {
+        message: smsData.body,
+        sender: smsData.sender,
+        type: 'text'
+      });
     } catch (error) {
-      console.error('[Analyze] Unexpected error:', error);
+      console.error('[Analyze] Unexpected error during flow:', error);
       Alert.alert(
         'Error',
         'Failed to fetch SMS from inbox. Please paste the message manually.',
       );
     } finally {
       setIsFetching(false);
+      console.log('[Analyze] Fetching sequence finished (isFetching set to false).');
     }
   }, [message, navigation]);
 
